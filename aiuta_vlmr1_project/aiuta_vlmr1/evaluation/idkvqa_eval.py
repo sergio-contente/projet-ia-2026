@@ -22,7 +22,7 @@ from typing import Any
 import torch
 
 from ..config import Config, ModelConfig
-from ..utils.model_loader import ModelLoader
+from ..utils.model_loader import ModelLoader, model_configs_equivalent
 from .answer_normalization import LABEL_IDK, normalize_yes_no_idk
 from .idkvqa_kg import (
     build_kg_attributes_from_detection,
@@ -401,14 +401,21 @@ def run_idkvqa_benchmark(
     random.seed(seed)
     torch.manual_seed(seed)
 
-    loader = ModelLoader.get_instance(config.model)
     second_pass_cfg = _build_second_pass_model_config(
         config, opts, second_pass_model_id, second_pass_processor_id,
     )
-    second_pass_loader = (
-        ModelLoader.get_instance(second_pass_cfg)
-        if second_pass_cfg is not None else loader
+    # When a *different* second checkpoint is used, only one model stays on GPU at a time
+    # (see ``two_pass_kg`` swap: unload primary → attribute pass → reload primary for VQA).
+    use_sequential_second_pass = (
+        second_pass_cfg is not None
+        and not model_configs_equivalent(config.model, second_pass_cfg)
     )
+
+    loader = ModelLoader.get_instance(config.model)
+    if second_pass_cfg is not None and not use_sequential_second_pass:
+        second_pass_loader = ModelLoader.get_instance(second_pass_cfg)
+    else:
+        second_pass_loader = loader
 
     samples = load_idkvqa(limit=limit, split=split, seed=seed)
     results: list[QAExampleResult] = []
@@ -469,15 +476,37 @@ def run_idkvqa_benchmark(
             if _cat_match:
                 attr_category = _cat_match.group(1).strip()
 
-            attr_attrs = TwoPassSelfQuestioner.run_attribute_pass_with_image(
-                second_pass_loader,
-                pil_image,
-                category=attr_category,
-                timestep=0,
-                question_hint=question,
-                target_attr_type=attr_type,
-                existing_attributes=kg_attributes,
-            )
+            if use_sequential_second_pass:
+                assert second_pass_cfg is not None
+                meta_first["sequential_second_pass_gpu"] = True
+                print(
+                    "[IDKVQA] Sequential GPU: unloading primary checkpoint for attribute pass, "
+                    "then reloading primary for VQA.",
+                    flush=True,
+                )
+                ModelLoader.reset(config.model)
+                spl = ModelLoader.get_instance(second_pass_cfg)
+                attr_attrs = TwoPassSelfQuestioner.run_attribute_pass_with_image(
+                    spl,
+                    pil_image,
+                    category=attr_category,
+                    timestep=0,
+                    question_hint=question,
+                    target_attr_type=attr_type,
+                    existing_attributes=kg_attributes,
+                )
+                ModelLoader.reset(second_pass_cfg)
+                loader = ModelLoader.get_instance(config.model)
+            else:
+                attr_attrs = TwoPassSelfQuestioner.run_attribute_pass_with_image(
+                    second_pass_loader,
+                    pil_image,
+                    category=attr_category,
+                    timestep=0,
+                    question_hint=question,
+                    target_attr_type=attr_type,
+                    existing_attributes=kg_attributes,
+                )
             num_model_calls += 1
             num_questioner_calls = 1
             meta_first["two_pass_attr_raw"] = {a.name: a.value for a in attr_attrs}

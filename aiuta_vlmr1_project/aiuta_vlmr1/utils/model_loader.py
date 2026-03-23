@@ -10,6 +10,7 @@ benchmarking with different checkpoints or dtypes).
 
 from __future__ import annotations
 
+import gc
 import threading
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,11 @@ def _model_config_fingerprint(model_config: ModelConfig) -> str:
         f"{model_config.torch_dtype}|{model_config.device_map}|"
         f"{model_config.max_new_tokens}"
     )
+
+
+def model_configs_equivalent(a: ModelConfig, b: ModelConfig) -> bool:
+    """True if two configs map to the same cached ``ModelLoader`` instance."""
+    return _model_config_fingerprint(a) == _model_config_fingerprint(b)
 
 
 class ModelLoader:
@@ -121,4 +127,6 @@ class ModelLoader:
         del inst._model
         del inst._processor
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
+        gc.collect()
