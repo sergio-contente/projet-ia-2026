@@ -8,8 +8,47 @@ from typing import Any
 from .schema import Attribute, AttributeSource, Certainty
 from .triple_extractor import TripleExtractor
 
-# Fields we expect in the attribute JSON.
-ATTRIBUTE_FIELDS = ("color", "material", "size", "features", "location", "pattern")
+# Canonical fields used by KG matching.
+CANONICAL_FIELDS = (
+    "color", "material", "size", "style", "features", "location",
+    "near", "spatial", "exists", "is_open", "pattern",
+)
+FIELD_ALIASES = {
+    "adjacent_to": "near",
+    "next_to": "near",
+    "room": "location",
+    "texture": "pattern",
+    "finish": "features",
+}
+BOOL_FIELDS = {"exists", "is_open"}
+
+
+def _canonical_field_name(field_name: str) -> str:
+    low = field_name.strip().lower()
+    return FIELD_ALIASES.get(low, low)
+
+
+def _normalize_attr_value(field_name: str, value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(v).strip() for v in value if str(v).strip())
+    text = str(value).strip()
+    if field_name in BOOL_FIELDS:
+        low = text.lower()
+        if low in ("true", "yes", "y", "1"):
+            return "yes"
+        if low in ("false", "no", "n", "0"):
+            return "no"
+    return text
+
+
+def _is_nullish(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
+        return True
+    if isinstance(value, list) and len(value) == 0:
+        return True
+    return False
 
 
 def _extract_answer_json(text: str) -> str | None:
@@ -63,13 +102,43 @@ def parse_attribute_json(
         return TripleExtractor.extract_attributes(text, timestep=timestep)
 
     attributes: list[Attribute] = []
-    for field_name in ATTRIBUTE_FIELDS:
-        value = data.get(field_name)
-        if value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", "")):
+    seen: set[str] = set()
+    freeform_pairs: list[str] = []
+
+    for raw_name, raw_value in data.items():
+        field_name = _canonical_field_name(str(raw_name))
+        if _is_nullish(raw_value):
             continue
+        norm_val = _normalize_attr_value(field_name, raw_value)
+        if not norm_val:
+            continue
+        if field_name in CANONICAL_FIELDS:
+            if field_name in seen:
+                continue
+            seen.add(field_name)
+            attributes.append(Attribute(
+                name=field_name,
+                value=norm_val,
+                certainty=Certainty.HIGH,
+                source=AttributeSource.VLM_REASONING,
+                timestep=timestep,
+            ))
+            if field_name == "near" and "spatial" not in seen:
+                seen.add("spatial")
+                attributes.append(Attribute(
+                    name="spatial",
+                    value=norm_val,
+                    certainty=Certainty.HIGH,
+                    source=AttributeSource.VLM_REASONING,
+                    timestep=timestep,
+                ))
+        else:
+            freeform_pairs.append(f"{raw_name}:{norm_val}")
+
+    if freeform_pairs:
         attributes.append(Attribute(
-            name=field_name,
-            value=str(value).strip(),
+            name="open_vocab_attributes",
+            value="; ".join(freeform_pairs[:8]),
             certainty=Certainty.HIGH,
             source=AttributeSource.VLM_REASONING,
             timestep=timestep,

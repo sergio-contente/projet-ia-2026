@@ -85,7 +85,10 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
 
         # --- Pass 2: structured attribute extraction via second forward pass ---
         attr_attributes = self._run_attribute_pass(
-            detection=detection, category=detection.label, timestep=timestep,
+            detection=detection,
+            category=detection.label,
+            timestep=timestep,
+            target_facts=target_facts,
         )
         if attr_attributes:
             kg.update_attributes(node.obj_id, attr_attributes)
@@ -101,11 +104,13 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         detection: Detection,
         category: str,
         timestep: int,
+        target_facts: TargetFacts | None = None,
     ) -> list:
         """Run a second VLM call to get structured attributes for the detected object."""
         return self._generate_attributes(
             self._loader, category=category, timestep=timestep,
             pil_image=getattr(detection, "image", None),
+            target_facts=target_facts,
         )
 
     @staticmethod
@@ -114,6 +119,9 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         pil_image: Any,
         category: str,
         timestep: int = 0,
+        question_hint: str | None = None,
+        target_attr_type: str | None = None,
+        existing_attributes: dict[str, str] | None = None,
     ) -> list:
         """
         Standalone attribute pass with an image — used by idkvqa_eval's two_pass_kg mode.
@@ -121,8 +129,45 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         Reuses the same ModelLoader singleton so no extra GPU memory is needed.
         """
         return TwoPassSelfQuestioner._generate_attributes(
-            loader, category=category, timestep=timestep, pil_image=pil_image,
+            loader,
+            category=category,
+            timestep=timestep,
+            pil_image=pil_image,
+            question_hint=question_hint,
+            target_attr_type=target_attr_type,
+            existing_attributes=existing_attributes,
         )
+
+    @staticmethod
+    def _contextual_attribute_prompt(
+        *,
+        category: str,
+        question_hint: str | None = None,
+        target_attr_type: str | None = None,
+        existing_attributes: dict[str, str] | None = None,
+        target_facts: TargetFacts | None = None,
+    ) -> str:
+        prompt = ATTRIBUTE_PROMPT.format(category=category)
+        context_lines: list[str] = []
+        if question_hint:
+            context_lines.append(f"User question to solve: {question_hint}")
+        if target_attr_type and target_attr_type != "unknown":
+            context_lines.append(f"Prioritize evidence for this attribute type: {target_attr_type}.")
+        if existing_attributes:
+            shown = ", ".join(f"{k}={v}" for k, v in sorted(existing_attributes.items())[:10])
+            if shown:
+                context_lines.append(f"Current KG hints from pass-1: {shown}.")
+        if target_facts and target_facts.known_attributes:
+            facts = ", ".join(f"{k}={v}" for k, v in sorted(target_facts.known_attributes.items())[:10])
+            context_lines.append(f"Known target facts: {facts}.")
+        if context_lines:
+            prompt = (
+                f"{prompt}\n\n"
+                "Context to disambiguate this object:\n"
+                f"{chr(10).join(f'- {ln}' for ln in context_lines)}\n"
+                "Ask yourself one concise clarifying question internally, then answer."
+            )
+        return prompt
 
     @staticmethod
     def _generate_attributes(
@@ -131,9 +176,19 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         category: str,
         timestep: int,
         pil_image: Any | None = None,
+        question_hint: str | None = None,
+        target_attr_type: str | None = None,
+        existing_attributes: dict[str, str] | None = None,
+        target_facts: TargetFacts | None = None,
     ) -> list:
         """Shared VLM call for structured attribute extraction (with or without image)."""
-        user_text = ATTRIBUTE_PROMPT.format(category=category)
+        user_text = TwoPassSelfQuestioner._contextual_attribute_prompt(
+            category=category,
+            question_hint=question_hint,
+            target_attr_type=target_attr_type,
+            existing_attributes=existing_attributes,
+            target_facts=target_facts,
+        )
         proc = loader.processor
         model = loader.model
 

@@ -69,6 +69,8 @@ class Config:
 
     # Sub-configs
     model: ModelConfig = field(default_factory=ModelConfig)
+    # Optional: dedicated model/processor for second-pass attribute extraction.
+    second_pass_model: ModelConfig | None = None
     kg: KGConfig = field(default_factory=KGConfig)
     trigger: TriggerConfig = field(default_factory=TriggerConfig)
 
@@ -98,6 +100,12 @@ class Config:
             for k, v in raw["model"].items():
                 if hasattr(cfg.model, k):
                     setattr(cfg.model, k, v)
+        if "second_pass_model" in raw and isinstance(raw["second_pass_model"], dict):
+            sp = ModelConfig()
+            for k, v in raw["second_pass_model"].items():
+                if hasattr(sp, k):
+                    setattr(sp, k, v)
+            cfg.second_pass_model = sp
         if "idkvqa_eval" in raw and isinstance(raw["idkvqa_eval"], dict):
             cfg._idkvqa_eval = dict(raw["idkvqa_eval"])
 
@@ -131,6 +139,16 @@ class Config:
                 "max_new_tokens": self.model.max_new_tokens,
                 "temperature": self.model.temperature,
             },
+            "second_pass_model": (
+                {
+                    "model_id": self.second_pass_model.model_id,
+                    "processor_id": self.second_pass_model.processor_id,
+                    "torch_dtype": self.second_pass_model.torch_dtype,
+                    "device_map": self.second_pass_model.device_map,
+                    "max_new_tokens": self.second_pass_model.max_new_tokens,
+                    "temperature": self.second_pass_model.temperature,
+                } if self.second_pass_model is not None else None
+            ),
             "kg": {
                 "certainty_threshold": self.kg.certainty_threshold,
                 "max_instances_per_category": self.kg.max_instances_per_category,
@@ -176,6 +194,15 @@ class Config:
             "output_dir": self.output_dir,
             "seed": self.seed,
         }
+        if self.second_pass_model is not None:
+            data["second_pass_model"] = {
+                "model_id": self.second_pass_model.model_id,
+                "processor_id": self.second_pass_model.processor_id,
+                "torch_dtype": self.second_pass_model.torch_dtype,
+                "device_map": self.second_pass_model.device_map,
+                "max_new_tokens": self.second_pass_model.max_new_tokens,
+                "temperature": self.second_pass_model.temperature,
+            }
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)

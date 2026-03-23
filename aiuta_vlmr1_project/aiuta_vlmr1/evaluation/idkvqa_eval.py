@@ -15,12 +15,13 @@ import argparse
 import json
 import random
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import torch
 
-from ..config import Config
+from ..config import Config, ModelConfig
 from ..utils.model_loader import ModelLoader
 from .answer_normalization import LABEL_IDK, normalize_yes_no_idk
 from .idkvqa_kg import (
@@ -107,6 +108,8 @@ def _idkvqa_eval_options(config: Config) -> dict[str, Any]:
         "abstention_rule": str(d.get("abstention_rule", "entropy_above_tau_to_idk")),
         "vqa_max_new_tokens": int(d.get("vqa_max_new_tokens", 256)),
         "detection_max_new_tokens": int(d.get("detection_max_new_tokens", 512)),
+        "second_pass_model_id": d.get("second_pass_model_id"),
+        "second_pass_processor_id": d.get("second_pass_processor_id"),
     }
 
 
@@ -240,7 +243,7 @@ def finalize_for_mode(
     mode: str,
     *,
     raw_normalized: str,
-    entropy: float | None,
+    uncertainty_score: float | None,
     threshold: float,
     rule: str,
     kg_hybrid: str | None,
@@ -261,7 +264,7 @@ def finalize_for_mode(
         return raw_normalized, False, False, False, None
 
     if mode == "threshold":
-        abst_dec = apply_uncertainty_threshold(raw_normalized, entropy, threshold, rule)
+        abst_dec = apply_uncertainty_threshold(raw_normalized, uncertainty_score, threshold, rule)
         return (
             abst_dec.final_prediction,
             False,
@@ -276,7 +279,7 @@ def finalize_for_mode(
 
     if mode == "kg_threshold":
         assert kg_hybrid is not None
-        abst_dec = apply_uncertainty_threshold(kg_hybrid, entropy, threshold, rule)
+        abst_dec = apply_uncertainty_threshold(kg_hybrid, uncertainty_score, threshold, rule)
         return (
             abst_dec.final_prediction,
             True,
@@ -302,6 +305,69 @@ def _raw_two_pass_refine_prompt(question: str, first_answer_text: str) -> str:
     )
 
 
+def _build_second_pass_model_config(
+    config: Config,
+    opts: dict[str, Any],
+    cli_second_pass_model_id: str | None,
+    cli_second_pass_processor_id: str | None,
+) -> ModelConfig | None:
+    cfg = replace(config.second_pass_model) if config.second_pass_model is not None else None
+    yml_model_id = opts.get("second_pass_model_id")
+    yml_processor_id = opts.get("second_pass_processor_id")
+    final_model_id = cli_second_pass_model_id or yml_model_id
+    final_processor_id = cli_second_pass_processor_id or yml_processor_id
+
+    if not final_model_id and not final_processor_id and cfg is None:
+        return None
+    if cfg is None:
+        cfg = replace(config.model)
+    if final_model_id:
+        cfg.model_id = str(final_model_id)
+    if final_processor_id:
+        cfg.processor_id = str(final_processor_id)
+    return cfg
+
+
+def _textual_uncertainty_fallback(reasoning_bucket: str, rule: str) -> float:
+    # Used only when logits-based uncertainty is unavailable.
+    if rule == "maxprob_below_tau_to_idk":
+        if reasoning_bucket == "high":
+            return 0.9
+        if reasoning_bucket == "low":
+            return 0.1
+        return 0.5
+    if reasoning_bucket == "high":
+        return 0.1
+    if reasoning_bucket == "low":
+        return 0.9
+    return 0.5
+
+
+def _resolve_uncertainty_signal(
+    *,
+    rule: str,
+    entropy: float | None,
+    max_prob: float | None,
+    reasoning_bucket: str,
+) -> tuple[float | None, str]:
+    # Entropy/maxprob are first-class signals; textual certainty is fallback only.
+    if rule == "entropy_above_tau_to_idk":
+        if entropy is not None:
+            return float(entropy), "entropy"
+        if max_prob is not None:
+            return float(1.0 - max_prob), "max_prob_inverted"
+    elif rule == "maxprob_below_tau_to_idk":
+        if max_prob is not None:
+            return float(max_prob), "max_prob"
+        if entropy is not None:
+            return float(1.0 - entropy), "entropy_inverted"
+    if entropy is not None:
+        return float(entropy), "entropy_fallback"
+    if max_prob is not None:
+        return float(max_prob), "max_prob_fallback"
+    return _textual_uncertainty_fallback(reasoning_bucket, rule), "textual_fallback"
+
+
 def run_idkvqa_benchmark(
     config: Config,
     mode: str,
@@ -310,6 +376,8 @@ def run_idkvqa_benchmark(
     split: str = "val",
     entropy_threshold: float | None = None,
     abstention_rule: str | None = None,
+    second_pass_model_id: str | None = None,
+    second_pass_processor_id: str | None = None,
 ) -> list[QAExampleResult]:
     """
     Run the primary offline IDKVQA benchmark with a single ablation ``mode``:
@@ -334,6 +402,13 @@ def run_idkvqa_benchmark(
     torch.manual_seed(seed)
 
     loader = ModelLoader.get_instance(config.model)
+    second_pass_cfg = _build_second_pass_model_config(
+        config, opts, second_pass_model_id, second_pass_processor_id,
+    )
+    second_pass_loader = (
+        ModelLoader.get_instance(second_pass_cfg)
+        if second_pass_cfg is not None else loader
+    )
 
     samples = load_idkvqa(limit=limit, split=split, seed=seed)
     results: list[QAExampleResult] = []
@@ -395,12 +470,24 @@ def run_idkvqa_benchmark(
                 attr_category = _cat_match.group(1).strip()
 
             attr_attrs = TwoPassSelfQuestioner.run_attribute_pass_with_image(
-                loader, pil_image, category=attr_category, timestep=0,
+                second_pass_loader,
+                pil_image,
+                category=attr_category,
+                timestep=0,
+                question_hint=question,
+                target_attr_type=attr_type,
+                existing_attributes=kg_attributes,
             )
             num_model_calls += 1
             num_questioner_calls = 1
             meta_first["two_pass_attr_raw"] = {a.name: a.value for a in attr_attrs}
             meta_first["two_pass_attr_category"] = attr_category
+            meta_first["two_pass_model_id"] = (
+                second_pass_cfg.model_id if second_pass_cfg is not None else config.model.model_id
+            )
+            meta_first["two_pass_processor_id"] = (
+                second_pass_cfg.processor_id if second_pass_cfg is not None else config.model.processor_id
+            )
 
             # Merge attribute-pass results into kg_attributes
             for attr in attr_attrs:
@@ -514,12 +601,15 @@ def run_idkvqa_benchmark(
             entropy = None
 
         reasoning_bucket = estimate_reasoning_certainty(vqa_reasoning or extract_answer_and_reasoning(raw_output)[1])
+        uncertainty_score_used, uncertainty_source = _resolve_uncertainty_signal(
+            rule=rule, entropy=entropy, max_prob=max_prob, reasoning_bucket=reasoning_bucket,
+        )
 
         t_dec = time.perf_counter()
         final_label, used_kg, used_th, used_abs, abst_dec = finalize_for_mode(
             mode,
             raw_normalized=raw_normalized,
-            entropy=entropy,
+            uncertainty_score=uncertainty_score_used,
             threshold=tau,
             rule=rule,
             kg_hybrid=kg_hybrid,
@@ -543,6 +633,8 @@ def run_idkvqa_benchmark(
             "abstention": abst_dec.__dict__ if abst_dec else None,
             "entropy_threshold": tau,
             "abstention_rule": rule,
+            "uncertainty_signal_source": uncertainty_source,
+            "uncertainty_score_used": uncertainty_score_used,
             "detection_latency_sec": det_latency,
             "vqa_latency_sec": vqa_latency,
             "max_token_prob": max_prob,
@@ -625,6 +717,8 @@ def main() -> None:
     parser.add_argument("--split", type=str, default="val")
     parser.add_argument("--model_id", type=str, default=None)
     parser.add_argument("--processor_id", type=str, default=None)
+    parser.add_argument("--second_pass_model_id", type=str, default=None)
+    parser.add_argument("--second_pass_processor_id", type=str, default=None)
     parser.add_argument(
         "--export-normalization-audit",
         type=str,
@@ -667,6 +761,8 @@ def main() -> None:
         limit=args.limit,
         seed=args.seed,
         split=args.split,
+        second_pass_model_id=args.second_pass_model_id,
+        second_pass_processor_id=args.second_pass_processor_id,
     )
     metrics = aggregate_idkvqa_metrics(results)
     save_idkvqa_benchmark_json(args.output, cfg, args.mode, args.seed, results, metrics)
