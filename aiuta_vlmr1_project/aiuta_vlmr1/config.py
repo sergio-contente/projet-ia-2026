@@ -22,6 +22,7 @@ class DetectorType(Enum):
 
 class QuestionerType(Enum):
     VLMR1 = "vlmr1"          # parse <think> block directly
+    TWO_PASS = "two_pass"    # detection triples + attribute forward pass
     ORIGINAL = "original"     # AIUTA multi-call (LLaVA + LLM)
 
 

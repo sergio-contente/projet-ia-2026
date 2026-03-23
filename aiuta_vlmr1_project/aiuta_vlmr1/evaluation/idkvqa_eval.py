@@ -42,8 +42,9 @@ from .vlm_inference_utils import (
     estimate_reasoning_certainty,
     extract_answer_and_reasoning,
 )
+from ..self_questioner.two_pass_questioner import TwoPassSelfQuestioner
 
-IDKVQA_MODES = ("raw", "raw_two_pass", "threshold", "kg", "kg_threshold")
+IDKVQA_MODES = ("raw", "raw_two_pass", "threshold", "kg", "kg_threshold", "two_pass_kg")
 
 # Matches the dataset prompt style (CoIN / VLM-R1 VQA protocol).
 IDKVQA_SYSTEM = (
@@ -248,7 +249,7 @@ def finalize_for_mode(
     Apply ablation post-processing. Returns
     (final_label, used_kg, used_threshold, used_abstention, abstention_decision_or_none).
     """
-    used_kg = mode in ("kg", "kg_threshold")
+    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg")
     used_th = mode in ("threshold", "kg_threshold")
     abst_dec: AbstentionDecision | None = None
 
@@ -283,6 +284,10 @@ def finalize_for_mode(
             abst_dec.abstained,
             abst_dec,
         )
+
+    if mode == "two_pass_kg":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, False, False, None
 
     raise ValueError(f"Unknown mode {mode!r}; expected one of {IDKVQA_MODES}")
 
@@ -369,7 +374,60 @@ def run_idkvqa_benchmark(
         vqa_latency = 0.0
         meta_first: dict[str, Any] = {}
 
-        if mode in ("kg", "kg_threshold"):
+        if mode == "two_pass_kg":
+            # Pass 1: detection reasoning (same as kg mode)
+            det_raw, det_latency, _, _, _ = _generate_chat(
+                loader, pil_image, DETECTION_SYSTEM, det_prompt,
+                max_new_tokens=det_tokens, output_scores=False,
+            )
+            num_model_calls += 1
+            num_detector_calls = 1
+            det_ans, det_think = extract_answer_and_reasoning(det_raw)
+            detection_reasoning = det_think or det_ans
+            kg_attributes, _extraction = build_kg_attributes_from_detection(detection_reasoning)
+
+            # Pass 2: structured attribute extraction
+            attr_category = "object"
+            # Try to guess a category from the question
+            import re as _re
+            _cat_match = _re.search(r"(?:the|a|an)\s+(\w+(?:\s+\w+)?)\s*\?", question.lower())
+            if _cat_match:
+                attr_category = _cat_match.group(1).strip()
+
+            attr_attrs = TwoPassSelfQuestioner.run_attribute_pass_with_image(
+                loader, pil_image, category=attr_category, timestep=0,
+            )
+            num_model_calls += 1
+            num_questioner_calls = 1
+
+            # Merge attribute-pass results into kg_attributes
+            for attr in attr_attrs:
+                if attr.name not in kg_attributes:
+                    kg_attributes[attr.name] = attr.value
+
+            num_kg_nodes = len(kg_attributes)
+            kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
+
+            # VQA pass
+            vqa_raw, vqa_latency, entropy, max_prob, _ = _generate_chat(
+                loader, pil_image, IDKVQA_SYSTEM, question,
+                max_new_tokens=vqa_tokens, output_scores=True,
+            )
+            num_model_calls += 1
+            num_questions_asked = 1
+            raw_output = vqa_raw
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw)
+            raw_normalized = normalize_yes_no_idk(raw_answer)
+
+            kg_hybrid = compute_kg_hybrid_prediction(
+                raw_normalized,
+                vqa_reasoning,
+                kg_attributes,
+                attr_type,
+                attr_value,
+                detection_reasoning,
+            )
+        elif mode in ("kg", "kg_threshold"):
             det_raw, det_latency, _, _, _ = _generate_chat(
                 loader, pil_image, DETECTION_SYSTEM, det_prompt,
                 max_new_tokens=det_tokens, output_scores=False,
