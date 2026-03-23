@@ -1,0 +1,16 @@
+# Slurm log files (may contain secrets from debug output)
+aiuta_vlmr1_project/results/logs/*.err
+aiuta_vlmr1_project/results/logs/*.out
+
+# Environment files
+.hf_env
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# HuggingFace cache
+hf_cache/
