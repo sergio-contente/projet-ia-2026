@@ -1,0 +1,20 @@
+# Primary offline benchmark (IDKVQA) — optional overrides merged into Config._idkvqa_eval
+detector_type: vlmr1
+questioner_type: vlmr1
+trigger_type: kg
+
+model:
+  model_id: omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321
+  processor_id: Qwen/Qwen2.5-VL-3B-Instruct
+  torch_dtype: bfloat16
+  device_map: auto
+  max_new_tokens: 1024
+
+idkvqa_eval:
+  entropy_threshold: 0.10
+  abstention_rule: entropy_above_tau_to_idk
+  vqa_max_new_tokens: 256
+  detection_max_new_tokens: 512
+
+output_dir: ./results
+seed: 42
