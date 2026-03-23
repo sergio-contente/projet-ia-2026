@@ -1,0 +1,176 @@
+"""
+two_pass_questioner.py — Two-pass self-questioner: detection triples + attribute forward pass.
+
+Pass 1: Extract presence/absence triples from the OVD <think> block (same as VLMr1SelfQuestioner).
+Pass 2: Run a second forward pass on the *same* model asking for structured attribute JSON
+         about the detected object. Parses the JSON into Attribute objects and populates the KG.
+
+Cost: 2 VLM calls per detection (vs 1 for VLMr1, 5-8 for original AIUTA).
+"""
+from __future__ import annotations
+
+import logging
+import re
+import time
+from typing import Any
+
+import torch
+
+from ..config import Config
+from ..detector.base import Detection
+from ..knowledge_graph.attribute_parser import parse_attribute_json
+from ..knowledge_graph.schema import TargetFacts
+from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
+from ..knowledge_graph.triple_extractor import TripleExtractor
+from ..utils.model_loader import ModelLoader
+from .base import AbstractSelfQuestioner, RefinedDescription
+
+logger = logging.getLogger(__name__)
+
+ATTRIBUTE_PROMPT = (
+    "You are an embodied agent navigating an indoor environment. "
+    "The object detector found a {category} in the image. "
+    "Carefully examine this {category} and describe ONLY it.\n"
+    "Think step by step in <think> tags, then answer in <answer> tags "
+    "with this exact JSON:\n"
+    '{{\n'
+    '  "color": "<primary color>",\n'
+    '  "material": "<material if visible, else null>",\n'
+    '  "size": "<large/medium/small relative to room>",\n'
+    '  "features": "<1-2 distinctive visual features>",\n'
+    '  "location": "<what it is near or where in the room>",\n'
+    '  "pattern": "<pattern/texture if relevant, else null>"\n'
+    '}}\n'
+    "Focus on attributes that would distinguish THIS {category} from "
+    "other similar {category}s in the same room."
+)
+
+ATTRIBUTE_MAX_NEW_TOKENS = 256
+
+
+class TwoPassSelfQuestioner(AbstractSelfQuestioner):
+    """Two-pass questioner: OVD triples + structured attribute extraction."""
+
+    def __init__(self, config: Config) -> None:
+        self._config = config
+        self._loader = ModelLoader.get_instance(config.model)
+
+    def process(
+        self,
+        detection: Detection,
+        target_facts: TargetFacts,
+        kg: SceneKnowledgeGraph,
+        timestep: int = 0,
+    ) -> RefinedDescription:
+        # --- Pass 1: extract triples from existing detection reasoning ---
+        if not detection.reasoning:
+            return RefinedDescription(object_node=None, text_description="", is_valid=False)
+
+        extraction = TripleExtractor.extract_all(
+            reasoning=detection.reasoning,
+            category=detection.label,
+            queried_objects=[],
+            timestep=timestep,
+        )
+
+        node = kg.add_object_merged(
+            category=detection.label, bbox=detection.bbox, timestep=timestep,
+        )
+
+        if extraction.attributes:
+            kg.update_attributes(node.obj_id, extraction.attributes)
+        for rel in extraction.spatial_relations:
+            kg.add_spatial_relation(node.obj_id, rel)
+
+        # --- Pass 2: structured attribute extraction via second forward pass ---
+        attr_attributes = self._run_attribute_pass(
+            detection=detection, category=detection.label, timestep=timestep,
+        )
+        if attr_attributes:
+            kg.update_attributes(node.obj_id, attr_attributes)
+
+        return RefinedDescription(
+            object_node=node,
+            text_description=node.to_natural_language(),
+            is_valid=True,
+        )
+
+    def _run_attribute_pass(
+        self,
+        detection: Detection,
+        category: str,
+        timestep: int,
+    ) -> list:
+        """Run a second VLM call to get structured attributes for the detected object."""
+        user_text = ATTRIBUTE_PROMPT.format(category=category)
+
+        proc = self._loader.processor
+        model = self._loader.model
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": (
+                "You are a helpful assistant specialized in visual reasoning for indoor scenes. "
+                "The reasoning must be in <think></think> tags, answer in <answer></answer> tags."
+            )},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+            ]},
+        ]
+
+        # If the detection has an associated image, we'd include it.
+        # In the pipeline context the image is passed through the detector;
+        # for IDKVQA eval, the caller supplies the image directly via
+        # _run_attribute_pass_with_image.  Here we do text-only as a safe
+        # fallback (returns attributes from the prompt context only).
+        text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = proc(text=[text], padding=True, return_tensors="pt").to(self._loader.device)
+
+        with torch.inference_mode():
+            gen_ids = model.generate(**inputs, max_new_tokens=ATTRIBUTE_MAX_NEW_TOKENS, do_sample=False)
+
+        trimmed = [o[len(inp):] for inp, o in zip(inputs.input_ids, gen_ids)]
+        raw_output = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+        return parse_attribute_json(raw_output, category=category, timestep=timestep)
+
+    @staticmethod
+    def run_attribute_pass_with_image(
+        loader: ModelLoader,
+        pil_image: Any,
+        category: str,
+        timestep: int = 0,
+    ) -> list:
+        """
+        Standalone attribute pass with an image — used by idkvqa_eval's two_pass_kg mode.
+
+        Reuses the same ModelLoader singleton so no extra GPU memory is needed.
+        """
+        user_text = ATTRIBUTE_PROMPT.format(category=category)
+
+        proc = loader.processor
+        model = loader.model
+
+        system = (
+            "You are a helpful assistant specialized in visual reasoning for indoor scenes. "
+            "The reasoning must be in <think></think> tags, answer in <answer></answer> tags."
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "image", "image": pil_image},
+                {"type": "text", "text": user_text},
+            ]},
+        ]
+
+        text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = proc(
+            text=[text], images=[pil_image], padding=True, return_tensors="pt",
+        ).to(loader.device)
+
+        with torch.inference_mode():
+            gen_ids = model.generate(**inputs, max_new_tokens=ATTRIBUTE_MAX_NEW_TOKENS, do_sample=False)
+
+        trimmed = [o[len(inp):] for inp, o in zip(inputs.input_ids, gen_ids)]
+        raw_output = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+        return parse_attribute_json(raw_output, category=category, timestep=timestep)

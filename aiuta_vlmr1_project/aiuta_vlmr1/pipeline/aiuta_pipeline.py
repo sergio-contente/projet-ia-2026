@@ -18,6 +18,7 @@ from ..detector.base import AbstractDetector
 from ..detector.vlmr1_detector import VLMr1Detector
 from ..self_questioner.base import AbstractSelfQuestioner
 from ..self_questioner.vlmr1_questioner import VLMr1SelfQuestioner
+from ..self_questioner.two_pass_questioner import TwoPassSelfQuestioner
 from ..interaction_trigger.base import AbstractInteractionTrigger, ActionType
 from ..interaction_trigger.kg_trigger import KGInteractionTrigger
 from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
@@ -65,6 +66,8 @@ class AIUTAPipeline:
     def _create_questioner(self, config: Config) -> AbstractSelfQuestioner:
         if config.questioner_type == QuestionerType.VLMR1:
             return VLMr1SelfQuestioner()
+        if config.questioner_type == QuestionerType.TWO_PASS:
+            return TwoPassSelfQuestioner(config)
         raise NotImplementedError(f"Questioner {config.questioner_type} not implemented")
 
     def _create_trigger(self, config: Config) -> AbstractInteractionTrigger:
