@@ -22,11 +22,15 @@ def test_raw_two_pass_in_modes():
     assert "raw_two_pass" in IDKVQA_MODES
 
 
+def test_two_pass_kg_relaxed_in_modes():
+    assert "two_pass_kg_relaxed" in IDKVQA_MODES
+
+
 def test_finalize_modes():
     r = finalize_for_mode(
         "raw",
         raw_normalized=LABEL_YES,
-        entropy=0.9,
+        uncertainty_score=0.9,
         threshold=0.5,
         rule="entropy_above_tau_to_idk",
         kg_hybrid=None,
@@ -36,7 +40,7 @@ def test_finalize_modes():
     r2 = finalize_for_mode(
         "threshold",
         raw_normalized=LABEL_YES,
-        entropy=0.9,
+        uncertainty_score=0.9,
         threshold=0.5,
         rule="entropy_above_tau_to_idk",
         kg_hybrid=None,
@@ -46,7 +50,7 @@ def test_finalize_modes():
     r3 = finalize_for_mode(
         "kg",
         raw_normalized=LABEL_NO,
-        entropy=0.1,
+        uncertainty_score=0.1,
         threshold=0.5,
         rule="entropy_above_tau_to_idk",
         kg_hybrid=LABEL_YES,
@@ -56,7 +60,7 @@ def test_finalize_modes():
     r4 = finalize_for_mode(
         "kg_threshold",
         raw_normalized=LABEL_NO,
-        entropy=0.9,
+        uncertainty_score=0.9,
         threshold=0.5,
         rule="entropy_above_tau_to_idk",
         kg_hybrid=LABEL_YES,
@@ -66,12 +70,32 @@ def test_finalize_modes():
     r5 = finalize_for_mode(
         "raw_two_pass",
         raw_normalized=LABEL_NO,
-        entropy=0.2,
+        uncertainty_score=0.2,
         threshold=0.5,
         rule="entropy_above_tau_to_idk",
         kg_hybrid=None,
     )
     assert r5[0] == LABEL_NO and r5[1] is False
+
+    r6 = finalize_for_mode(
+        "two_pass_kg",
+        raw_normalized=LABEL_NO,
+        uncertainty_score=0.5,
+        threshold=0.5,
+        rule="entropy_above_tau_to_idk",
+        kg_hybrid=LABEL_YES,
+    )
+    assert r6[0] == LABEL_YES and r6[1] is True and r6[2] is False
+
+    r7 = finalize_for_mode(
+        "two_pass_kg_relaxed",
+        raw_normalized=LABEL_NO,
+        uncertainty_score=0.5,
+        threshold=0.5,
+        rule="entropy_above_tau_to_idk",
+        kg_hybrid=LABEL_YES,
+    )
+    assert r7[0] == LABEL_YES and r7[1] is True and r7[2] is False
 
 
 def test_overclaim_underclaim_metrics():

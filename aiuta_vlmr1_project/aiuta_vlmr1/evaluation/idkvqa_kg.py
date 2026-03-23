@@ -169,6 +169,38 @@ def compute_kg_hybrid_prediction(
     return LABEL_IDK
 
 
+def compute_kg_hybrid_prediction_relaxed(
+    raw_predicted: str,
+    vqa_reasoning: str,
+    kg_attributes: dict[str, str],
+    attr_type: str,
+    attr_value: str | None,
+    detection_reasoning: str,
+) -> str:
+    """
+    Same fusion as :func:`compute_kg_hybrid_prediction`, except when there is no KG evidence
+    for ``attr_type`` and the VQA text is not hedging: return ``raw_predicted`` instead of
+    ``LABEL_IDK`` (trust the VLM when it appears confident).
+    """
+    kg_broad = dict(kg_attributes)
+    enrich_kg_from_reasoning(kg_broad, detection_reasoning, attr_type)
+    kg_medium = kg_answer_from_attributes(kg_broad, attr_type, attr_value)
+
+    hedging = [
+        "appears", "seems", "might", "possibly", "likely", "probably", "could be",
+        "hard to tell", "not sure", "unclear", "cannot determine",
+    ]
+    has_hedging = any(h in vqa_reasoning.lower() for h in hedging)
+
+    if has_hedging and attr_type not in kg_broad:
+        return LABEL_IDK
+    if not has_hedging and attr_type in kg_broad:
+        return raw_predicted
+    if attr_type in kg_broad:
+        return kg_medium
+    return raw_predicted
+
+
 def normalize_prediction_label(text: str) -> str:
     """Normalize model output to Yes / No / I don't know when possible."""
     return normalize_yes_no_idk(text)

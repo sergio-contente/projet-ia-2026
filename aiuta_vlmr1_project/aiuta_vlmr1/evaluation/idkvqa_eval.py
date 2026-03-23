@@ -28,6 +28,7 @@ from .idkvqa_kg import (
     build_kg_attributes_from_detection,
     classify_question_type,
     compute_kg_hybrid_prediction,
+    compute_kg_hybrid_prediction_relaxed,
     kg_answer_from_attributes,
     parse_question_attribute,
 )
@@ -45,7 +46,15 @@ from .vlm_inference_utils import (
 )
 from ..self_questioner.two_pass_questioner import TwoPassSelfQuestioner
 
-IDKVQA_MODES = ("raw", "raw_two_pass", "threshold", "kg", "kg_threshold", "two_pass_kg")
+IDKVQA_MODES = (
+    "raw",
+    "raw_two_pass",
+    "threshold",
+    "kg",
+    "kg_threshold",
+    "two_pass_kg",
+    "two_pass_kg_relaxed",
+)
 
 # Matches the dataset prompt style (CoIN / VLM-R1 VQA protocol).
 IDKVQA_SYSTEM = (
@@ -252,7 +261,7 @@ def finalize_for_mode(
     Apply ablation post-processing. Returns
     (final_label, used_kg, used_threshold, used_abstention, abstention_decision_or_none).
     """
-    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg")
+    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg", "two_pass_kg_relaxed")
     used_th = mode in ("threshold", "kg_threshold")
     abst_dec: AbstentionDecision | None = None
 
@@ -289,6 +298,10 @@ def finalize_for_mode(
         )
 
     if mode == "two_pass_kg":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, False, False, None
+
+    if mode == "two_pass_kg_relaxed":
         assert kg_hybrid is not None
         return kg_hybrid, True, False, False, None
 
@@ -388,6 +401,8 @@ def run_idkvqa_benchmark(
     - ``threshold``: abstain via uncertainty rule (default: normalized entropy).
     - ``kg``: detection reasoning → triples → KG hybrid answer.
     - ``kg_threshold``: KG hybrid, then uncertainty gate to IDK.
+    - ``two_pass_kg`` / ``two_pass_kg_relaxed``: detection + attribute pass + VQA; same fusion path
+      except ``two_pass_kg_relaxed`` uses a relaxed hybrid (trust VLM when no KG slot and no hedging).
     """
     if mode not in IDKVQA_MODES:
         raise ValueError(f"mode must be one of {IDKVQA_MODES}, got {mode!r}")
@@ -456,7 +471,7 @@ def run_idkvqa_benchmark(
         vqa_latency = 0.0
         meta_first: dict[str, Any] = {}
 
-        if mode == "two_pass_kg":
+        if mode in ("two_pass_kg", "two_pass_kg_relaxed"):
             # Pass 1: detection reasoning (same as kg mode)
             det_raw, det_latency, _, _, _ = _generate_chat(
                 loader, pil_image, DETECTION_SYSTEM, det_prompt,
@@ -537,14 +552,24 @@ def run_idkvqa_benchmark(
             raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw)
             raw_normalized = normalize_yes_no_idk(raw_answer)
 
-            kg_hybrid = compute_kg_hybrid_prediction(
-                raw_normalized,
-                vqa_reasoning,
-                kg_attributes,
-                attr_type,
-                attr_value,
-                detection_reasoning,
-            )
+            if mode == "two_pass_kg_relaxed":
+                kg_hybrid = compute_kg_hybrid_prediction_relaxed(
+                    raw_normalized,
+                    vqa_reasoning,
+                    kg_attributes,
+                    attr_type,
+                    attr_value,
+                    detection_reasoning,
+                )
+            else:
+                kg_hybrid = compute_kg_hybrid_prediction(
+                    raw_normalized,
+                    vqa_reasoning,
+                    kg_attributes,
+                    attr_type,
+                    attr_value,
+                    detection_reasoning,
+                )
         elif mode in ("kg", "kg_threshold"):
             det_raw, det_latency, _, _, _ = _generate_chat(
                 loader, pil_image, DETECTION_SYSTEM, det_prompt,
