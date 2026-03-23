@@ -399,6 +399,8 @@ def run_idkvqa_benchmark(
             )
             num_model_calls += 1
             num_questioner_calls = 1
+            meta_first["two_pass_attr_raw"] = {a.name: a.value for a in attr_attrs}
+            meta_first["two_pass_attr_category"] = attr_category
 
             # Merge attribute-pass results into kg_attributes
             for attr in attr_attrs:

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 ATTRIBUTE_PROMPT = (
     "You are an embodied agent navigating an indoor environment. "
-    "The object detector found a {category} in the image. "
+    "The object detector found a {category} in the image.\n"
     "Carefully examine this {category} and describe ONLY it.\n"
     "Think step by step in <think> tags, then answer in <answer> tags "
     "with this exact JSON:\n"
@@ -35,12 +35,15 @@ ATTRIBUTE_PROMPT = (
     '  "color": "<primary color>",\n'
     '  "material": "<material if visible, else null>",\n'
     '  "size": "<large/medium/small relative to room>",\n'
-    '  "features": "<1-2 distinctive visual features>",\n'
-    '  "location": "<what it is near or where in the room>",\n'
-    '  "pattern": "<pattern/texture if relevant, else null>"\n'
+    '  "style": "<modern/traditional/minimalist/antique/rustic, else null>",\n'
+    '  "features": "<distinctive features: handles, doors, drawers, patterns, etc>",\n'
+    '  "location": "<room name: kitchen/bedroom/living room/bathroom, else null>",\n'
+    '  "near": "<object it is next to or against, else null>",\n'
+    '  "exists": "yes",\n'
+    '  "is_open": "<yes/no if applicable, else null>"\n'
     '}}\n'
-    "Focus on attributes that would distinguish THIS {category} from "
-    "other similar {category}s in the same room."
+    "Be specific. If you cannot see an attribute clearly, use null.\n"
+    "Focus on attributes that distinguish THIS {category} from others in the same room."
 )
 
 ATTRIBUTE_MAX_NEW_TOKENS = 256
