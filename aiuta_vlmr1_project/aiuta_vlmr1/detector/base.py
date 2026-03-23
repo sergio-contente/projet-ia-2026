@@ -12,6 +12,7 @@ class Detection:
     reasoning: str | None = None
     raw_answer: str | None = None
     attributes: dict[str, str] | None = None
+    image: object | None = None  # PIL image for downstream passes (e.g. attribute extraction)
 
 @dataclass
 class DetectionResult:

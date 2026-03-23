@@ -10,8 +10,6 @@ Cost: 2 VLM calls per detection (vs 1 for VLMr1, 5-8 for original AIUTA).
 from __future__ import annotations
 
 import logging
-import re
-import time
 from typing import Any
 
 import torch
@@ -102,36 +100,10 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         timestep: int,
     ) -> list:
         """Run a second VLM call to get structured attributes for the detected object."""
-        user_text = ATTRIBUTE_PROMPT.format(category=category)
-
-        proc = self._loader.processor
-        model = self._loader.model
-
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": (
-                "You are a helpful assistant specialized in visual reasoning for indoor scenes. "
-                "The reasoning must be in <think></think> tags, answer in <answer></answer> tags."
-            )},
-            {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-            ]},
-        ]
-
-        # If the detection has an associated image, we'd include it.
-        # In the pipeline context the image is passed through the detector;
-        # for IDKVQA eval, the caller supplies the image directly via
-        # _run_attribute_pass_with_image.  Here we do text-only as a safe
-        # fallback (returns attributes from the prompt context only).
-        text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = proc(text=[text], padding=True, return_tensors="pt").to(self._loader.device)
-
-        with torch.inference_mode():
-            gen_ids = model.generate(**inputs, max_new_tokens=ATTRIBUTE_MAX_NEW_TOKENS, do_sample=False)
-
-        trimmed = [o[len(inp):] for inp, o in zip(inputs.input_ids, gen_ids)]
-        raw_output = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-
-        return parse_attribute_json(raw_output, category=category, timestep=timestep)
+        return self._generate_attributes(
+            self._loader, category=category, timestep=timestep,
+            pil_image=getattr(detection, "image", None),
+        )
 
     @staticmethod
     def run_attribute_pass_with_image(
@@ -145,8 +117,20 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
 
         Reuses the same ModelLoader singleton so no extra GPU memory is needed.
         """
-        user_text = ATTRIBUTE_PROMPT.format(category=category)
+        return TwoPassSelfQuestioner._generate_attributes(
+            loader, category=category, timestep=timestep, pil_image=pil_image,
+        )
 
+    @staticmethod
+    def _generate_attributes(
+        loader: ModelLoader,
+        *,
+        category: str,
+        timestep: int,
+        pil_image: Any | None = None,
+    ) -> list:
+        """Shared VLM call for structured attribute extraction (with or without image)."""
+        user_text = ATTRIBUTE_PROMPT.format(category=category)
         proc = loader.processor
         model = loader.model
 
@@ -154,18 +138,22 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
             "You are a helpful assistant specialized in visual reasoning for indoor scenes. "
             "The reasoning must be in <think></think> tags, answer in <answer></answer> tags."
         )
+
+        user_content: list[dict[str, Any]] = []
+        if pil_image is not None:
+            user_content.append({"type": "image", "image": pil_image})
+        user_content.append({"type": "text", "text": user_text})
+
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": [
-                {"type": "image", "image": pil_image},
-                {"type": "text", "text": user_text},
-            ]},
+            {"role": "user", "content": user_content},
         ]
 
         text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = proc(
-            text=[text], images=[pil_image], padding=True, return_tensors="pt",
-        ).to(loader.device)
+        proc_kwargs: dict[str, Any] = {"text": [text], "padding": True, "return_tensors": "pt"}
+        if pil_image is not None:
+            proc_kwargs["images"] = [pil_image]
+        inputs = proc(**proc_kwargs).to(loader.device)
 
         with torch.inference_mode():
             gen_ids = model.generate(**inputs, max_new_tokens=ATTRIBUTE_MAX_NEW_TOKENS, do_sample=False)
