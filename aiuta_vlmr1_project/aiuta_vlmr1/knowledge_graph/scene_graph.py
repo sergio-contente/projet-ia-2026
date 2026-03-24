@@ -315,6 +315,9 @@ class SceneKnowledgeGraph:
 
     @classmethod
     def load_json(cls, path: str | Path) -> SceneKnowledgeGraph:
-        """Load KG from JSON written by :meth:`save_json`."""
+        """Load KG from JSON written by :meth:`save_json` or a global bundle (graph part only)."""
         with open(path, encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("format") == "global_kg_bundle_v1":
+            return cls.from_dict(data["graph"])
+        return cls.from_dict(data)

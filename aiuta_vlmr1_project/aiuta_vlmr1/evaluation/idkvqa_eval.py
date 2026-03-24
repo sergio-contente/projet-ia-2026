@@ -25,6 +25,7 @@ import torch
 
 from ..config import Config, ModelConfig
 from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
+from .global_kg_io import load_global_kg_for_eval
 from ..utils.model_loader import ModelLoader, model_configs_equivalent
 from .answer_normalization import LABEL_IDK, normalize_yes_no_idk
 from .idkvqa_kg import (
@@ -488,9 +489,9 @@ def run_idkvqa_benchmark(
       pass + VQA; ``two_pass_kg_relaxed`` trusts VLM when no KG slot and no hedging, while
       ``two_pass_kg_entropy`` applies an entropy gate on that fallback.
     - ``global_kg`` / ``global_kg_entropy``: one VQA call per sample; attributes come from a
-      pre-built JSON graph (see ``knowledge_graph.build_global_kg``). Uses the same hybrid
-      fusion as ``kg`` / ``two_pass_kg_entropy`` respectively. Lookup key is
-      :func:`stable_idkvqa_image_id` (content hash), not raw ``sample_id``.
+      pre-built bundle (see ``knowledge_graph.build_global_kg`` + ``global_kg_io``). Lookup
+      uses ``sample_id`` first, then optionally ``sample_id_to_image_hash`` from the bundle
+      and/or :func:`stable_idkvqa_image_id` for legacy graphs keyed by hash only.
 
       **Oracle note:** building the global KG on the same val split is an upper-bound-style
       analysis (full-graph context built from the same images you evaluate on).
@@ -527,9 +528,14 @@ def run_idkvqa_benchmark(
         second_pass_loader = loader
 
     global_kg: SceneKnowledgeGraph | None = None
+    global_kg_sample_to_hash: dict[str, str] = {}
     if mode in ("global_kg", "global_kg_entropy"):
-        global_kg = SceneKnowledgeGraph.load_json(global_kg_path)
-        print(f"[IDKVQA] Loaded global KG from {global_kg_path} ({global_kg.num_objects} objects)")
+        global_kg, global_kg_sample_to_hash = load_global_kg_for_eval(global_kg_path)
+        print(
+            f"[IDKVQA] Loaded global KG from {global_kg_path} "
+            f"({global_kg.num_objects} objects, {len(global_kg_sample_to_hash)} id→hash entries)",
+            flush=True,
+        )
 
     samples = load_idkvqa(limit=limit, split=split, seed=seed)
     results: list[QAExampleResult] = []
@@ -722,8 +728,11 @@ def run_idkvqa_benchmark(
             )
         elif mode in ("global_kg", "global_kg_entropy"):
             assert global_kg is not None
-            image_key = stable_idkvqa_image_id(pil_image)
-            kg_attributes = dict(global_kg.get_attributes_for_image(image_key))
+            sid = str(sample["sample_id"])
+            kg_attributes = dict(global_kg.get_attributes_for_image(sid))
+            if not kg_attributes:
+                fp = global_kg_sample_to_hash.get(sid) or stable_idkvqa_image_id(pil_image)
+                kg_attributes = dict(global_kg.get_attributes_for_image(fp))
             num_kg_nodes = len(kg_attributes)
             kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
 
@@ -762,7 +771,10 @@ def run_idkvqa_benchmark(
                     attr_value,
                     "",
                 )
-            meta_first["global_kg_image_key"] = image_key
+            meta_first["global_kg_sample_id"] = sid
+            meta_first["global_kg_image_hash"] = global_kg_sample_to_hash.get(
+                sid, stable_idkvqa_image_id(pil_image),
+            )
             meta_first["global_kg_path"] = global_kg_path
         elif mode == "raw_two_pass":
             det_raw, det_latency, _, _, _ = _generate_chat(

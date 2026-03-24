@@ -33,6 +33,46 @@ ATTRIBUTE_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
+_SUBJECT_SKIP_WORDS = {
+    "it", "this", "that", "there", "here", "image", "picture", "scene", "room", "true", "same",
+    "possible", "correct", "visible", "present", "something", "anything",
+    "red", "blue", "green", "black", "white", "yellow", "brown", "gray", "grey", "orange", "pink",
+    "dark", "light", "beige", "purple",
+    "large", "small", "big", "tiny", "compact", "tall", "short",
+}
+
+
+def subject_category_from_idkvqa_question(question: str) -> str:
+    """
+    Heuristic **object category** (subject noun) from an IDKVQA question.
+
+    Examples: "Is the chair red?" → ``chair``; "Is the red chair wooden?" → ``chair``.
+    Falls back to ``object`` when parsing fails.
+    """
+    low = question.lower().strip()
+    m = re.search(r"(?:is\s+there|are\s+there)\s+(?:a|an|any|some)\s+([a-z][a-z0-9\-]*)", low)
+    if m:
+        w = m.group(1)
+        if w not in _SUBJECT_SKIP_WORDS:
+            return w
+    m = re.search(
+        r"\b(?:is|are|does|do)\s+the\s+([a-z][a-z0-9]*)(?:\s+([a-z][a-z0-9]*))?",
+        low,
+    )
+    if m:
+        w1, w2 = m.group(1), m.group(2)
+        if w1 not in _SUBJECT_SKIP_WORDS:
+            return w1
+        if w2 and w2 not in _SUBJECT_SKIP_WORDS:
+            return w2
+    m = re.search(r"\b(?:is|are)\s+(?:a|an)\s+([a-z][a-z0-9\-]*)", low)
+    if m:
+        w = m.group(1)
+        if w not in _SUBJECT_SKIP_WORDS:
+            return w
+    return "object"
+
+
 def parse_question_attribute(question: str) -> tuple[str, str | None]:
     """Best-effort attribute key and optional literal value from the question text."""
     q = question.lower().strip()

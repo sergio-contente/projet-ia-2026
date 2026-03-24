@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from aiuta_vlmr1.evaluation.global_kg_io import load_global_kg_for_eval, save_global_kg_bundle
 from aiuta_vlmr1.evaluation.idkvqa_eval import IDKVQA_MODES
+from aiuta_vlmr1.evaluation.idkvqa_kg import subject_category_from_idkvqa_question
 from aiuta_vlmr1.knowledge_graph.scene_graph import SceneKnowledgeGraph
 from aiuta_vlmr1.knowledge_graph.schema import Attribute, Certainty
 
@@ -50,4 +52,36 @@ def test_save_load_json(tmp_path: Path):
     path = tmp_path / "test_kg.json"
     kg.save_json(path)
     kg2 = SceneKnowledgeGraph.load_json(path)
+    assert kg2.num_objects == 1
+
+
+def test_subject_category_from_question():
+    assert subject_category_from_idkvqa_question("Is the chair red?") == "chair"
+    assert subject_category_from_idkvqa_question("Is the red chair wooden?") == "chair"
+    assert subject_category_from_idkvqa_question("Is there a lamp on the table?") == "lamp"
+
+
+def test_global_kg_bundle_roundtrip(tmp_path: Path):
+    kg = SceneKnowledgeGraph()
+    n = kg.add_object("chair", image_id="42")
+    kg.update_attributes(
+        n.obj_id,
+        [Attribute(name="color", value="red", certainty=Certainty.HIGH)],
+    )
+    mapping = {"42": "deadbeef", "43": "deadbeef"}
+    path = tmp_path / "bundle.json"
+    save_global_kg_bundle(kg, mapping, path)
+    kg2, m2 = load_global_kg_for_eval(path)
+    assert m2 == mapping
+    assert kg2.num_objects == 1
+    assert kg2.get_attributes_for_image("42") == {"color": "red"}
+
+
+def test_load_global_kg_legacy_pure_graph(tmp_path: Path):
+    kg = SceneKnowledgeGraph()
+    kg.add_object("table", image_id="7")
+    path = tmp_path / "legacy.json"
+    kg.save_json(path)
+    kg2, m = load_global_kg_for_eval(path)
+    assert m == {}
     assert kg2.num_objects == 1

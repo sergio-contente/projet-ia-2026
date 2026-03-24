@@ -3,7 +3,8 @@
 # Modes disponíveis (CLI --mode):
 #   raw, raw_two_pass, threshold, kg, kg_threshold,
 #   two_pass_kg, two_pass_kg_relaxed, two_pass_kg_entropy,
-#   global_kg, global_kg_entropy  (requerem --global-kg-path apontando para JSON do build_global_kg)
+#   global_kg, global_kg_entropy  (requerem --global-kg-path = bundle JSON:
+#      formato global_kg_bundle_v1 com graph + sample_id_to_image_hash; graphs legados sem bundle ainda carregam)
 #
 detector_type: vlmr1
 questioner_type: vlmr1
