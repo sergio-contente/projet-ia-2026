@@ -2,10 +2,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
+from PIL import Image
+
+from aiuta_vlmr1.config import Config
+from aiuta_vlmr1.detector.base import Detection, DetectionResult
 from aiuta_vlmr1.evaluation.global_kg_io import load_global_kg_for_eval, save_global_kg_bundle
 from aiuta_vlmr1.evaluation.idkvqa_eval import IDKVQA_MODES
 from aiuta_vlmr1.evaluation.idkvqa_kg import subject_category_from_idkvqa_question
+from aiuta_vlmr1.knowledge_graph.build_global_kg import (
+    _pick_detection_for_question,
+    _reasoning_slice_for_label,
+    build_global_kg,
+)
 from aiuta_vlmr1.knowledge_graph.scene_graph import SceneKnowledgeGraph
 from aiuta_vlmr1.knowledge_graph.schema import Attribute, Certainty
 
@@ -85,3 +96,66 @@ def test_load_global_kg_legacy_pure_graph(tmp_path: Path):
     kg2, m = load_global_kg_for_eval(path)
     assert m == {}
     assert kg2.num_objects == 1
+
+
+def test_reasoning_slice_prefers_label_sentences():
+    r = "A lamp is tall. The chair is red. The table is blue."
+    s = _reasoning_slice_for_label(r, "chair")
+    assert "chair" in s.lower() and "red" in s.lower()
+    assert "table" not in s.lower() or "lamp" not in s  # chair-only slice
+
+
+def test_pick_detection_matches_label():
+    d1 = Detection(bbox=[0, 0, 1, 1], label="chair")
+    d2 = Detection(bbox=[1, 1, 2, 2], label="table")
+    assert _pick_detection_for_question([d1, d2], "chair") is d1
+    assert _pick_detection_for_question([d1, d2], "table") is d2
+
+
+def test_build_global_kg_per_object_distinct_attrs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Same image, two questions (chair vs table): KG attrs differ per sample_id when OVD returns two dets."""
+    img = Image.new("RGB", (64, 64), color=(100, 100, 100))
+    rows = [
+        {"id": "s1", "image": img, "question": "Is the chair white?"},
+        {"id": "s2", "image": img, "question": "Is the table red?"},
+    ]
+
+    monkeypatch.setattr(
+        "aiuta_vlmr1.knowledge_graph.build_global_kg._load_hf_rows",
+        lambda _split, _seed: rows,
+    )
+    monkeypatch.setattr(
+        "aiuta_vlmr1.knowledge_graph.build_global_kg.ModelLoader",
+        MagicMock(get_instance=lambda *_a, **_kw: object()),
+    )
+
+    d_chair = Detection(bbox=[0.0, 0.0, 10.0, 10.0], label="chair", reasoning="")
+    d_table = Detection(bbox=[20.0, 20.0, 40.0, 40.0], label="table", reasoning="")
+
+    class _FakeDet:
+        def __init__(self, _cfg):
+            pass
+
+        def detect_from_observation(self, _obs, _categories, kg_context=None):
+            return DetectionResult(
+                detections=[d_chair, d_table],
+                raw_output="",
+                reasoning_text=(
+                    "The chair in the scene is white. The wooden table is painted red."
+                ),
+                json_valid=True,
+                latency_sec=0.0,
+            )
+
+    monkeypatch.setattr(
+        "aiuta_vlmr1.knowledge_graph.build_global_kg.VLMr1Detector",
+        _FakeDet,
+    )
+
+    out = tmp_path / "bundle.json"
+    kg = build_global_kg(Config(), split="val", limit=1, seed=0, output_path=str(out))
+    assert kg.num_objects == 2
+    a1 = kg.get_attributes_for_image("s1")
+    a2 = kg.get_attributes_for_image("s2")
+    assert a1 != a2, (a1, a2)
+    assert "color" in a1 and "color" in a2
