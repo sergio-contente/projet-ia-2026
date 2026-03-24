@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from aiuta_vlmr1.evaluation.answer_normalization import LABEL_IDK, LABEL_NO, LABEL_YES, normalize_yes_no_idk
 from aiuta_vlmr1.evaluation.idkvqa_eval import IDKVQA_MODES, finalize_for_mode
-from aiuta_vlmr1.evaluation.idkvqa_types import QAExampleResult, aggregate_idkvqa_metrics
+from aiuta_vlmr1.evaluation.idkvqa_types import (
+    QAExampleResult,
+    aggregate_idkvqa_metrics,
+    compute_effective_reliability,
+    compute_effective_reliability_binary,
+    compute_effective_reliability_coin,
+)
 from aiuta_vlmr1.evaluation.mode_transition_analysis import compare_mode_transitions
 from aiuta_vlmr1.evaluation.normalization_audit import export_normalization_audit, select_audit_indices
 from aiuta_vlmr1.evaluation.paper_artifacts import export_mode_tables, main_benchmark_row, reliability_row
@@ -248,3 +254,162 @@ def test_threshold_sweep_schema():
     assert len(rows) == 2
     assert "metrics" in rows[0]
     assert rows[0]["metrics"]["num_samples"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Problema 1: CoIN effective reliability
+# ---------------------------------------------------------------------------
+
+def test_compute_effective_reliability_binary_alias():
+    """compute_effective_reliability is an alias for compute_effective_reliability_binary."""
+    preds = [LABEL_YES, LABEL_NO, LABEL_IDK]
+    gts = [LABEL_YES, LABEL_YES, LABEL_IDK]
+    assert compute_effective_reliability(preds, gts) == compute_effective_reliability_binary(preds, gts)
+
+
+def test_compute_effective_reliability_coin_agreement():
+    """pred=Yes, answers={"Yes":3,"No":1,"I don't know":1} -> score = min(3/3,1) = 1.0."""
+    preds = [LABEL_YES]
+    gts = [LABEL_YES]
+    answers = [{"Yes": 3, "No": 1, "I don't know": 1}]
+    er = compute_effective_reliability_coin(preds, gts, answers, cost=1.0)
+    assert er == 1.0
+
+
+def test_compute_effective_reliability_coin_wrong():
+    """pred=No, answers={"Yes":5} -> k=0 -> score = -cost = -1.0."""
+    preds = [LABEL_NO]
+    gts = [LABEL_YES]
+    answers = [{"Yes": 5}]
+    er = compute_effective_reliability_coin(preds, gts, answers, cost=1.0)
+    assert er == -1.0
+
+
+def test_compute_effective_reliability_coin_idk():
+    """pred=IDK -> score = 0.0 regardless of annotator answers."""
+    preds = [LABEL_IDK]
+    gts = [LABEL_YES]
+    answers = [{"Yes": 5}]
+    er = compute_effective_reliability_coin(preds, gts, answers, cost=1.0)
+    assert er == 0.0
+
+
+def test_compute_effective_reliability_coin_partial_agreement():
+    """pred=Yes, answers={"Yes":2,"No":3} -> k=2 -> score = min(2/3, 1) = 0.6667."""
+    preds = [LABEL_YES]
+    gts = [LABEL_NO]
+    answers = [{"Yes": 2, "No": 3}]
+    er = compute_effective_reliability_coin(preds, gts, answers, cost=1.0)
+    assert abs(er - 2.0 / 3.0) < 1e-6
+
+
+def test_aggregate_metrics_coin_with_annotator_answers():
+    """aggregate_idkvqa_metrics includes phi_coin_* when annotator_answers are present."""
+    r = _synthetic_result("1", LABEL_YES, LABEL_YES)
+    from dataclasses import replace
+    r = replace(r, annotator_answers={"Yes": 3, "No": 1, "I don't know": 1})
+    m = aggregate_idkvqa_metrics([r])
+    eff = m["effective_reliability"]
+    assert "phi_coin_c1_pct" in eff
+    assert "phi_coin_c05_pct" in eff
+
+
+def test_aggregate_metrics_coin_without_annotator_answers():
+    """aggregate_idkvqa_metrics omits phi_coin_* when no annotator_answers."""
+    r = _synthetic_result("1", LABEL_YES, LABEL_YES)
+    m = aggregate_idkvqa_metrics([r])
+    eff = m["effective_reliability"]
+    assert "phi_coin_c1_pct" not in eff
+
+
+# ---------------------------------------------------------------------------
+# Problema 2: fair_comparison
+# ---------------------------------------------------------------------------
+
+def test_fair_comparison_build_row():
+    from aiuta_vlmr1.evaluation.fair_comparison import build_fair_row, FAIR_COLUMNS
+    r = _synthetic_result("1", LABEL_YES, LABEL_YES)
+    row = build_fair_row("raw", [r], note="test note")
+    for col in FAIR_COLUMNS:
+        assert col in row, f"Missing column {col}"
+    assert row["note"] == "test note"
+
+
+def test_fair_comparison_run(tmp_path):
+    """run_fair_comparison loads JSONs and outputs a table with expected columns."""
+    import json
+    from aiuta_vlmr1.evaluation.fair_comparison import run_fair_comparison, FAIR_COLUMNS
+
+    # Create a minimal result JSON
+    result_data = {
+        "mode": "raw",
+        "per_sample": [
+            {
+                "sample_id": "1",
+                "question": "Is there a table?",
+                "ground_truth": LABEL_YES,
+                "raw_prediction": "yes",
+                "final_prediction": LABEL_YES,
+                "confidence_score": 0.9,
+                "entropy_score": 0.1,
+                "used_kg": False,
+                "used_threshold": False,
+                "used_abstention": False,
+                "latency_sec": 1.0,
+                "metadata": {},
+                "mode": "raw",
+                "raw_prediction_label": LABEL_YES,
+                "correct": True,
+                "num_model_calls": 1,
+                "num_detector_calls": 0,
+                "num_questioner_calls": 0,
+                "num_trigger_calls": 0,
+                "num_questions_asked": 1,
+                "num_kg_nodes": None,
+                "total_latency_sec": 1.0,
+                "detector_latency_sec": None,
+                "decision_latency_sec": 0.0,
+                "uncertainty_score": 0.1,
+                "threshold": None,
+                "abstained": False,
+            },
+        ],
+    }
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    with open(results_dir / "raw_run.json", "w") as f:
+        json.dump(result_data, f)
+
+    output_path = tmp_path / "fair.json"
+    rows = run_fair_comparison(str(results_dir), str(output_path))
+    assert len(rows) >= 1
+    for col in FAIR_COLUMNS:
+        assert col in rows[0], f"Missing column {col}"
+    assert output_path.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Problema 3: entropy DRY
+# ---------------------------------------------------------------------------
+
+def test_compute_answer_token_entropy_importable():
+    """compute_answer_token_entropy is importable from vlm_inference_utils."""
+    from aiuta_vlmr1.evaluation.vlm_inference_utils import compute_answer_token_entropy
+    assert callable(compute_answer_token_entropy)
+
+
+def test_compute_logits_entropy_importable():
+    """compute_logits_entropy is importable from vlm_inference_utils."""
+    from aiuta_vlmr1.evaluation.vlm_inference_utils import compute_logits_entropy
+    assert callable(compute_logits_entropy)
+
+
+def test_entropy_coin_agent_imports_from_vlm_inference_utils():
+    """entropy_coin_agent imports compute_answer_token_entropy from vlm_inference_utils."""
+    import aiuta_vlmr1.pipeline.entropy_coin_agent as eca
+    from aiuta_vlmr1.evaluation.vlm_inference_utils import (
+        compute_answer_token_entropy as shared_fn,
+        compute_logits_entropy as shared_logits_fn,
+    )
+    assert eca.compute_answer_token_entropy is shared_fn
+    assert eca.compute_logits_entropy is shared_logits_fn

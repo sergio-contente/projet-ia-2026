@@ -15,7 +15,7 @@ import argparse
 import json
 import random
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +125,15 @@ def _idkvqa_eval_options(config: Config) -> dict[str, Any]:
     }
 
 
+@dataclass
+class _ChatResult:
+    raw_output: str
+    gen_time: float
+    entropy_first_token: float | None
+    entropy_answer_token: float | None
+    max_prob: float | None
+
+
 def _generate_chat(
     loader: ModelLoader,
     pil_image: Any,
@@ -134,6 +143,19 @@ def _generate_chat(
     output_scores: bool,
 ) -> tuple[str, float, float | None, float | None, float]:
     """Returns raw_output, latency_sec, entropy, max_prob, gen_time only for VQA split."""
+    result = _generate_chat_full(loader, pil_image, system, user_text, max_new_tokens, output_scores)
+    return result.raw_output, result.gen_time, result.entropy_first_token, result.max_prob, result.gen_time
+
+
+def _generate_chat_full(
+    loader: ModelLoader,
+    pil_image: Any,
+    system: str,
+    user_text: str,
+    max_new_tokens: int,
+    output_scores: bool,
+) -> _ChatResult:
+    """Full chat generation returning both entropy variants."""
     proc = loader.processor
     model = loader.model
     messages = [
@@ -172,16 +194,34 @@ def _generate_chat(
         vs = None
         if vocab_size is not None and hasattr(vocab_size, "vocab_size"):
             vs = int(vocab_size.vocab_size)
-        entropy = compute_first_token_entropy(outputs, vocab_size=vs)
+        entropy_first = compute_first_token_entropy(outputs, vocab_size=vs)
         max_prob = compute_first_token_max_prob(outputs)
-        return raw_output, gen_time, entropy, max_prob, gen_time
+
+        # Answer-token entropy (token after <answer> tag)
+        generated_ids = list(trimmed[0].tolist()) if trimmed else []
+        entropy_answer, _ = compute_answer_token_entropy(outputs, proc, generated_ids)
+        entropy_answer = entropy_answer if entropy_answer >= 0 else None
+
+        return _ChatResult(
+            raw_output=raw_output,
+            gen_time=gen_time,
+            entropy_first_token=entropy_first,
+            entropy_answer_token=entropy_answer,
+            max_prob=max_prob,
+        )
 
     gen_ids = outputs
     trimmed = [o[len(inp):] for inp, o in zip(inputs.input_ids, gen_ids)]
     raw_output = proc.batch_decode(
         trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False,
     )[0]
-    return raw_output, gen_time, None, None, gen_time
+    return _ChatResult(
+        raw_output=raw_output,
+        gen_time=gen_time,
+        entropy_first_token=None,
+        entropy_answer_token=None,
+        max_prob=None,
+    )
 
 
 def _build_qa_result(
@@ -462,6 +502,7 @@ def run_idkvqa_benchmark(
         raw_output = ""
         raw_answer = ""
         entropy: float | None = None
+        entropy_answer: float | None = None
         max_prob: float | None = None
         det_latency = 0.0
         vqa_latency = 0.0
@@ -551,14 +592,18 @@ def run_idkvqa_benchmark(
             kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
 
             # VQA pass
-            vqa_raw, vqa_latency, entropy, max_prob, _ = _generate_chat(
+            vqa_result = _generate_chat_full(
                 loader, pil_image, IDKVQA_SYSTEM, question,
                 max_new_tokens=vqa_tokens, output_scores=True,
             )
+            vqa_latency = vqa_result.gen_time
+            entropy = vqa_result.entropy_first_token
+            entropy_answer = vqa_result.entropy_answer_token
+            max_prob = vqa_result.max_prob
             num_model_calls += 1
             num_questions_asked = 1
-            raw_output = vqa_raw
-            raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw)
+            raw_output = vqa_result.raw_output
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(raw_output)
             raw_normalized = normalize_yes_no_idk(raw_answer)
 
             if mode == "two_pass_kg_relaxed":
@@ -603,14 +648,18 @@ def run_idkvqa_benchmark(
             num_kg_nodes = len(kg_attributes)
             kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
 
-            vqa_raw, vqa_latency, entropy, max_prob, _ = _generate_chat(
+            vqa_result = _generate_chat_full(
                 loader, pil_image, IDKVQA_SYSTEM, question,
                 max_new_tokens=vqa_tokens, output_scores=True,
             )
+            vqa_latency = vqa_result.gen_time
+            entropy = vqa_result.entropy_first_token
+            entropy_answer = vqa_result.entropy_answer_token
+            max_prob = vqa_result.max_prob
             num_model_calls += 1
             num_questions_asked = 1
-            raw_output = vqa_raw
-            raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw)
+            raw_output = vqa_result.raw_output
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(raw_output)
             raw_normalized = normalize_yes_no_idk(raw_answer)
 
             kg_hybrid = compute_kg_hybrid_prediction(
@@ -642,14 +691,17 @@ def run_idkvqa_benchmark(
             raw_answer1, vqa_reasoning1 = extract_answer_and_reasoning(vqa_raw1)
 
             refine_user = _raw_two_pass_refine_prompt(question, raw_answer1)
-            vqa_raw2, vqa_lat2, entropy, max_prob, _ = _generate_chat(
+            vqa_result2 = _generate_chat_full(
                 loader, pil_image, IDKVQA_SYSTEM, refine_user,
                 max_new_tokens=vqa_tokens, output_scores=True,
             )
+            entropy = vqa_result2.entropy_first_token
+            entropy_answer = vqa_result2.entropy_answer_token
+            max_prob = vqa_result2.max_prob
             num_model_calls += 1
             num_questions_asked += 1
-            vqa_latency = vqa_lat1 + vqa_lat2
-            raw_output = vqa_raw2
+            vqa_latency = vqa_lat1 + vqa_result2.gen_time
+            raw_output = vqa_result2.raw_output
             raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw2)
             raw_normalized = normalize_yes_no_idk(raw_answer)
             meta_first = {
@@ -659,14 +711,18 @@ def run_idkvqa_benchmark(
                 "raw_two_pass_vqa2_latency_sec": vqa_lat2,
             }
         else:  # raw, threshold
-            vqa_raw, vqa_latency, entropy, max_prob, _ = _generate_chat(
+            vqa_result = _generate_chat_full(
                 loader, pil_image, IDKVQA_SYSTEM, question,
                 max_new_tokens=vqa_tokens, output_scores=need_scores,
             )
+            vqa_latency = vqa_result.gen_time
+            entropy = vqa_result.entropy_first_token
+            entropy_answer = vqa_result.entropy_answer_token
+            max_prob = vqa_result.max_prob
             num_model_calls = 1
             num_questions_asked = 1
-            raw_output = vqa_raw
-            raw_answer, vqa_reasoning = extract_answer_and_reasoning(vqa_raw)
+            raw_output = vqa_result.raw_output
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(raw_output)
             raw_normalized = normalize_yes_no_idk(raw_answer)
             kg_hybrid = None
             kg_strict = None
@@ -709,6 +765,7 @@ def run_idkvqa_benchmark(
             "abstention_rule": rule,
             "uncertainty_signal_source": uncertainty_source,
             "uncertainty_score_used": uncertainty_score_used,
+            "entropy_answer_token": entropy_answer,
             "detection_latency_sec": det_latency,
             "vqa_latency_sec": vqa_latency,
             "max_token_prob": max_prob,
