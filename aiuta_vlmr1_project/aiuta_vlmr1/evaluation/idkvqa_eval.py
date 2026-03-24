@@ -12,16 +12,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import time
 from dataclasses import dataclass, replace
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from ..config import Config, ModelConfig
+from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
 from ..utils.model_loader import ModelLoader, model_configs_equivalent
 from .answer_normalization import LABEL_IDK, normalize_yes_no_idk
 from .idkvqa_kg import (
@@ -57,6 +60,8 @@ IDKVQA_MODES = (
     "two_pass_kg",
     "two_pass_kg_relaxed",
     "two_pass_kg_entropy",
+    "global_kg",
+    "global_kg_entropy",
 )
 
 # Matches the dataset prompt style (CoIN / VLM-R1 VQA protocol).
@@ -111,6 +116,19 @@ def load_idkvqa(limit: int | None = None, split: str = "val", seed: int | None =
         })
     print(f"[IDKVQA] Loaded {len(samples)} samples (split={split})")
     return samples
+
+
+def stable_idkvqa_image_id(pil_image: Any) -> str:
+    """
+    Stable fingerprint for an IDKVQA image (PNG bytes SHA-256).
+
+    Used for global KG deduplication and lookup: same pixels ⇒ same id, including
+    across samples that share one image but have different ``sample_id`` values.
+    """
+    buf = BytesIO()
+    im = pil_image.copy() if hasattr(pil_image, "copy") else pil_image
+    im.save(buf, format="PNG")
+    return hashlib.sha256(buf.getvalue()).hexdigest()
 
 
 def _idkvqa_eval_options(config: Config) -> dict[str, Any]:
@@ -305,7 +323,15 @@ def finalize_for_mode(
     Apply ablation post-processing. Returns
     (final_label, used_kg, used_threshold, used_abstention, abstention_decision_or_none).
     """
-    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg", "two_pass_kg_relaxed", "two_pass_kg_entropy")
+    used_kg = mode in (
+        "kg",
+        "kg_threshold",
+        "two_pass_kg",
+        "two_pass_kg_relaxed",
+        "two_pass_kg_entropy",
+        "global_kg",
+        "global_kg_entropy",
+    )
     used_th = mode in ("threshold", "kg_threshold")
     abst_dec: AbstentionDecision | None = None
 
@@ -350,6 +376,14 @@ def finalize_for_mode(
         return kg_hybrid, True, False, False, None
 
     if mode == "two_pass_kg_entropy":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, False, False, None
+
+    if mode == "global_kg":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, False, False, None
+
+    if mode == "global_kg_entropy":
         assert kg_hybrid is not None
         return kg_hybrid, True, False, False, None
 
@@ -439,6 +473,7 @@ def run_idkvqa_benchmark(
     abstention_rule: str | None = None,
     second_pass_model_id: str | None = None,
     second_pass_processor_id: str | None = None,
+    global_kg_path: str | None = None,
 ) -> list[QAExampleResult]:
     """
     Run the primary offline IDKVQA benchmark with a single ablation ``mode``:
@@ -452,9 +487,19 @@ def run_idkvqa_benchmark(
     - ``two_pass_kg`` / ``two_pass_kg_relaxed`` / ``two_pass_kg_entropy``: detection + attribute
       pass + VQA; ``two_pass_kg_relaxed`` trusts VLM when no KG slot and no hedging, while
       ``two_pass_kg_entropy`` applies an entropy gate on that fallback.
+    - ``global_kg`` / ``global_kg_entropy``: one VQA call per sample; attributes come from a
+      pre-built JSON graph (see ``knowledge_graph.build_global_kg``). Uses the same hybrid
+      fusion as ``kg`` / ``two_pass_kg_entropy`` respectively. Lookup key is
+      :func:`stable_idkvqa_image_id` (content hash), not raw ``sample_id``.
+
+      **Oracle note:** building the global KG on the same val split is an upper-bound-style
+      analysis (full-graph context built from the same images you evaluate on).
     """
     if mode not in IDKVQA_MODES:
         raise ValueError(f"mode must be one of {IDKVQA_MODES}, got {mode!r}")
+    if mode in ("global_kg", "global_kg_entropy"):
+        if not global_kg_path:
+            raise ValueError(f"global_kg_path is required for mode {mode!r}")
 
     opts = _idkvqa_eval_options(config)
     tau = float(entropy_threshold if entropy_threshold is not None else opts["entropy_threshold"])
@@ -480,6 +525,11 @@ def run_idkvqa_benchmark(
         second_pass_loader = ModelLoader.get_instance(second_pass_cfg)
     else:
         second_pass_loader = loader
+
+    global_kg: SceneKnowledgeGraph | None = None
+    if mode in ("global_kg", "global_kg_entropy"):
+        global_kg = SceneKnowledgeGraph.load_json(global_kg_path)
+        print(f"[IDKVQA] Loaded global KG from {global_kg_path} ({global_kg.num_objects} objects)")
 
     samples = load_idkvqa(limit=limit, split=split, seed=seed)
     results: list[QAExampleResult] = []
@@ -508,7 +558,7 @@ def run_idkvqa_benchmark(
         vqa_latency = 0.0
 
         # Request token entropy for ``raw`` as well so offline threshold sweeps (``threshold_sweep``) work.
-        need_scores = mode in ("raw", "threshold", "kg_threshold")
+        need_scores = mode in ("raw", "threshold", "kg_threshold", "global_kg", "global_kg_entropy")
 
         num_model_calls = 0
         num_detector_calls = 0
@@ -670,6 +720,50 @@ def run_idkvqa_benchmark(
                 attr_value,
                 detection_reasoning,
             )
+        elif mode in ("global_kg", "global_kg_entropy"):
+            assert global_kg is not None
+            image_key = stable_idkvqa_image_id(pil_image)
+            kg_attributes = dict(global_kg.get_attributes_for_image(image_key))
+            num_kg_nodes = len(kg_attributes)
+            kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
+
+            vqa_result = _generate_chat_full(
+                loader, pil_image, IDKVQA_SYSTEM, question,
+                max_new_tokens=vqa_tokens, output_scores=True,
+            )
+            vqa_latency = vqa_result.gen_time
+            entropy = vqa_result.entropy_first_token
+            entropy_answer = vqa_result.entropy_answer_token
+            max_prob = vqa_result.max_prob
+            num_model_calls += 1
+            num_questions_asked = 1
+            raw_output = vqa_result.raw_output
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(raw_output)
+            raw_normalized = normalize_yes_no_idk(raw_answer)
+            detection_reasoning = ""
+
+            if mode == "global_kg_entropy":
+                kg_hybrid = compute_kg_hybrid_prediction_entropy(
+                    raw_normalized,
+                    vqa_reasoning,
+                    kg_attributes,
+                    attr_type,
+                    attr_value,
+                    "",
+                    entropy=entropy,
+                    entropy_tau=tau,
+                )
+            else:
+                kg_hybrid = compute_kg_hybrid_prediction(
+                    raw_normalized,
+                    vqa_reasoning,
+                    kg_attributes,
+                    attr_type,
+                    attr_value,
+                    "",
+                )
+            meta_first["global_kg_image_key"] = image_key
+            meta_first["global_kg_path"] = global_kg_path
         elif mode == "raw_two_pass":
             det_raw, det_latency, _, _, _ = _generate_chat(
                 loader, pil_image, DETECTION_SYSTEM, det_prompt,
@@ -875,6 +969,12 @@ def main() -> None:
         default=None,
         help="If set, JSON path for entropy tau sweep rows (uses per-sample entropy from this run).",
     )
+    parser.add_argument(
+        "--global-kg-path",
+        type=str,
+        default=None,
+        help="Path to pre-built global KG JSON (required for global_kg / global_kg_entropy).",
+    )
     args = parser.parse_args()
 
     if args.config:
@@ -886,6 +986,9 @@ def main() -> None:
     if args.processor_id:
         cfg.model.processor_id = args.processor_id
 
+    if args.mode in ("global_kg", "global_kg_entropy") and not args.global_kg_path:
+        parser.error("--global-kg-path is required for modes global_kg and global_kg_entropy")
+
     results = run_idkvqa_benchmark(
         cfg,
         mode=args.mode,
@@ -894,6 +997,7 @@ def main() -> None:
         split=args.split,
         second_pass_model_id=args.second_pass_model_id,
         second_pass_processor_id=args.second_pass_processor_id,
+        global_kg_path=args.global_kg_path,
     )
     metrics = aggregate_idkvqa_metrics(results)
     save_idkvqa_benchmark_json(args.output, cfg, args.mode, args.seed, results, metrics)

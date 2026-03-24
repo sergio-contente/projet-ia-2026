@@ -17,6 +17,7 @@ cd "$HOME/ai_project/aiuta_vlmr1_project"
 source "$HOME/ai_project/.venv/bin/activate"
 
 MODE="${MODE:-raw}"
+GLOBAL_KG_PATH="${GLOBAL_KG_PATH:-}"
 
 mkdir -p "$HOME/hf_cache"
 export HF_HOME="$HOME/hf_cache"
@@ -30,10 +31,16 @@ pip install datasets --break-system-packages -q 2>/dev/null || true
 
 mkdir -p results/logs results/idkvqa
 
+EXTRA_ARGS=()
+if [ -n "$GLOBAL_KG_PATH" ]; then
+  EXTRA_ARGS+=(--global-kg-path "$GLOBAL_KG_PATH")
+fi
+
 echo "=== RUN IDKVQA EVALUATION (mode=${MODE}) ==="
 python3 -m aiuta_vlmr1.evaluation.idkvqa_eval \
   --config ${CONFIG:-configs/idkvqa_eval.yaml} \
   --mode "$MODE" \
-  --output "results/idkvqa/${MODE}_${SLURM_JOB_ID}.json"
+  --output "results/idkvqa/${MODE}_${SLURM_JOB_ID}.json" \
+  "${EXTRA_ARGS[@]}"
 
 echo "=== DONE ==="

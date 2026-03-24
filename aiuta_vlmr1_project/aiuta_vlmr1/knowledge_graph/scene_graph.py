@@ -1,11 +1,20 @@
 """scene_graph.py — Per-episode scene knowledge graph. Repository pattern."""
 from __future__ import annotations
 
+import json
 from collections import defaultdict
-from typing import Iterator
+from pathlib import Path
+from typing import Any, Iterator
 
 from ..evaluation.coin_metrics import compute_iou
-from .schema import Attribute, ObjectNode, SpatialRelation, TargetFacts, Certainty
+from .schema import (
+    Attribute,
+    AttributeSource,
+    ObjectNode,
+    SpatialRelation,
+    TargetFacts,
+    Certainty,
+)
 
 
 class SceneKnowledgeGraph:
@@ -151,3 +160,161 @@ class SceneKnowledgeGraph:
     @property
     def num_objects(self) -> int:
         return len(self._nodes)
+
+    def get_attributes_for_image(self, image_id: str) -> dict[str, str]:
+        """Flatten attribute / spatial relation values for all objects in ``image_id``."""
+        attrs: dict[str, str] = {}
+        for node in self._nodes.values():
+            if node.image_id == image_id:
+                for name, attr in node.attributes.items():
+                    if name not in attrs:
+                        attrs[name] = attr.value
+                for rel in node.spatial_relations:
+                    if rel.relation not in attrs:
+                        attrs[rel.relation] = rel.reference
+        return attrs
+
+    def get_objects_for_image(self, image_id: str) -> list[ObjectNode]:
+        return [n for n in self._nodes.values() if n.image_id == image_id]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize full KG state to a JSON-compatible dict."""
+        nodes_out: list[dict[str, Any]] = []
+        for node in self._nodes.values():
+            nodes_out.append(
+                {
+                    "obj_id": node.obj_id,
+                    "category": node.category,
+                    "bbox": node.bbox,
+                    "image_id": node.image_id,
+                    "timestep_first": node.timestep_first,
+                    "timestep_last": node.timestep_last,
+                    "attributes": {
+                        k: {
+                            "name": v.name,
+                            "value": v.value,
+                            "certainty": v.certainty.value,
+                            "source": v.source.value,
+                            "timestep": v.timestep,
+                        }
+                        for k, v in node.attributes.items()
+                    },
+                    "spatial_relations": [
+                        {
+                            "relation": r.relation,
+                            "reference": r.reference,
+                            "certainty": r.certainty.value,
+                            "timestep": r.timestep,
+                        }
+                        for r in node.spatial_relations
+                    ],
+                    "is_target_candidate": node.is_target_candidate,
+                    "alignment_score": node.alignment_score,
+                }
+            )
+        tf = self.target_facts
+        return {
+            "version": 1,
+            "merge_iou_threshold": self._merge_iou_threshold,
+            "merge_timestep_window": self._merge_timestep_window,
+            "nodes": nodes_out,
+            "category_index": {k: list(v) for k, v in self._category_index.items()},
+            "id_counter": {k: int(v) for k, v in self._id_counter.items()},
+            "target_facts": {
+                "category": tf.category,
+                "known_attributes": dict(tf.known_attributes),
+                "negative_attributes": dict(tf.negative_attributes),
+                "source_history": list(tf.source_history),
+                "fact_provenance": dict(tf.fact_provenance),
+                "asked_questions": list(tf.asked_questions),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SceneKnowledgeGraph:
+        """Reconstruct KG from :meth:`to_dict` output."""
+        kg = cls(
+            merge_iou_threshold=float(data.get("merge_iou_threshold", 0.5)),
+            merge_timestep_window=int(data.get("merge_timestep_window", 1)),
+        )
+        kg._nodes.clear()
+        kg._category_index.clear()
+        kg._id_counter.clear()
+
+        def _certainty(v: Any) -> Certainty:
+            try:
+                return Certainty(str(v).lower())
+            except ValueError:
+                return Certainty.MEDIUM
+
+        def _source(v: Any) -> AttributeSource:
+            try:
+                return AttributeSource(str(v).lower())
+            except ValueError:
+                return AttributeSource.VLM_REASONING
+
+        for nd in data.get("nodes") or []:
+            attrs: dict[str, Attribute] = {}
+            for k, ad in (nd.get("attributes") or {}).items():
+                attrs[k] = Attribute(
+                    name=ad["name"],
+                    value=ad["value"],
+                    certainty=_certainty(ad.get("certainty", "medium")),
+                    source=_source(ad.get("source", "vlm_reasoning")),
+                    timestep=int(ad.get("timestep", 0)),
+                )
+            spatial: list[SpatialRelation] = []
+            for sr in nd.get("spatial_relations") or []:
+                spatial.append(
+                    SpatialRelation(
+                        relation=sr["relation"],
+                        reference=sr["reference"],
+                        certainty=_certainty(sr.get("certainty", "medium")),
+                        timestep=int(sr.get("timestep", 0)),
+                    )
+                )
+            node = ObjectNode(
+                obj_id=nd["obj_id"],
+                category=nd["category"],
+                bbox=nd.get("bbox"),
+                image_id=nd.get("image_id"),
+                timestep_first=int(nd.get("timestep_first", 0)),
+                timestep_last=int(nd.get("timestep_last", 0)),
+                attributes=attrs,
+                spatial_relations=spatial,
+                is_target_candidate=bool(nd.get("is_target_candidate", False)),
+                alignment_score=float(nd.get("alignment_score", -1.0)),
+            )
+            kg._nodes[node.obj_id] = node
+
+        # Rebuild category index from nodes (authoritative)
+        for node in kg._nodes.values():
+            kg._category_index[node.category].append(node.obj_id)
+
+        for cat, c in (data.get("id_counter") or {}).items():
+            kg._id_counter[str(cat)] = int(c)
+
+        tf_raw = data.get("target_facts") or {}
+        kg.target_facts = TargetFacts(
+            category=str(tf_raw.get("category", "")),
+            known_attributes=dict(tf_raw.get("known_attributes") or {}),
+            negative_attributes=dict(tf_raw.get("negative_attributes") or {}),
+            source_history=list(tf_raw.get("source_history") or []),
+            fact_provenance=dict(tf_raw.get("fact_provenance") or {}),
+            asked_questions=list(tf_raw.get("asked_questions") or []),
+        )
+
+        return kg
+
+    def save_json(self, path: str | Path) -> None:
+        """Save KG to a JSON file."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False, default=str)
+
+    @classmethod
+    def load_json(cls, path: str | Path) -> SceneKnowledgeGraph:
+        """Load KG from JSON written by :meth:`save_json`."""
+        with open(path, encoding="utf-8") as f:
+            return cls.from_dict(json.load(f))
