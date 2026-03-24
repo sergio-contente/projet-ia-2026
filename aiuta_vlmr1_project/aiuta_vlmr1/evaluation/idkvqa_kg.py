@@ -201,6 +201,41 @@ def compute_kg_hybrid_prediction_relaxed(
     return raw_predicted
 
 
+def compute_kg_hybrid_prediction_entropy(
+    raw_predicted: str,
+    vqa_reasoning: str,
+    kg_attributes: dict[str, str],
+    attr_type: str,
+    attr_value: str | None,
+    detection_reasoning: str,
+    entropy: float | None,
+    entropy_tau: float = 0.09,
+) -> str:
+    """
+    Same fusion as :func:`compute_kg_hybrid_prediction_relaxed`, but fallback to raw VLM
+    only when token entropy is below ``entropy_tau``.
+    """
+    kg_broad = dict(kg_attributes)
+    enrich_kg_from_reasoning(kg_broad, detection_reasoning, attr_type)
+    kg_medium = kg_answer_from_attributes(kg_broad, attr_type, attr_value)
+
+    hedging = [
+        "appears", "seems", "might", "possibly", "likely", "probably", "could be",
+        "hard to tell", "not sure", "unclear", "cannot determine",
+    ]
+    has_hedging = any(h in vqa_reasoning.lower() for h in hedging)
+
+    if has_hedging and attr_type not in kg_broad:
+        return LABEL_IDK
+    if not has_hedging and attr_type in kg_broad:
+        return raw_predicted
+    if attr_type in kg_broad:
+        return kg_medium
+    if entropy is not None and entropy < entropy_tau:
+        return raw_predicted
+    return LABEL_IDK
+
+
 def normalize_prediction_label(text: str) -> str:
     """Normalize model output to Yes / No / I don't know when possible."""
     return normalize_yes_no_idk(text)

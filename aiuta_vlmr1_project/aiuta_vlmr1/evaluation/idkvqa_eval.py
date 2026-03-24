@@ -28,6 +28,7 @@ from .idkvqa_kg import (
     build_kg_attributes_from_detection,
     classify_question_type,
     compute_kg_hybrid_prediction,
+    compute_kg_hybrid_prediction_entropy,
     compute_kg_hybrid_prediction_relaxed,
     kg_answer_from_attributes,
     parse_question_attribute,
@@ -54,6 +55,7 @@ IDKVQA_MODES = (
     "kg_threshold",
     "two_pass_kg",
     "two_pass_kg_relaxed",
+    "two_pass_kg_entropy",
 )
 
 # Matches the dataset prompt style (CoIN / VLM-R1 VQA protocol).
@@ -261,7 +263,7 @@ def finalize_for_mode(
     Apply ablation post-processing. Returns
     (final_label, used_kg, used_threshold, used_abstention, abstention_decision_or_none).
     """
-    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg", "two_pass_kg_relaxed")
+    used_kg = mode in ("kg", "kg_threshold", "two_pass_kg", "two_pass_kg_relaxed", "two_pass_kg_entropy")
     used_th = mode in ("threshold", "kg_threshold")
     abst_dec: AbstentionDecision | None = None
 
@@ -302,6 +304,10 @@ def finalize_for_mode(
         return kg_hybrid, True, False, False, None
 
     if mode == "two_pass_kg_relaxed":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, False, False, None
+
+    if mode == "two_pass_kg_entropy":
         assert kg_hybrid is not None
         return kg_hybrid, True, False, False, None
 
@@ -401,8 +407,9 @@ def run_idkvqa_benchmark(
     - ``threshold``: abstain via uncertainty rule (default: normalized entropy).
     - ``kg``: detection reasoning → triples → KG hybrid answer.
     - ``kg_threshold``: KG hybrid, then uncertainty gate to IDK.
-    - ``two_pass_kg`` / ``two_pass_kg_relaxed``: detection + attribute pass + VQA; same fusion path
-      except ``two_pass_kg_relaxed`` uses a relaxed hybrid (trust VLM when no KG slot and no hedging).
+    - ``two_pass_kg`` / ``two_pass_kg_relaxed`` / ``two_pass_kg_entropy``: detection + attribute
+      pass + VQA; ``two_pass_kg_relaxed`` trusts VLM when no KG slot and no hedging, while
+      ``two_pass_kg_entropy`` applies an entropy gate on that fallback.
     """
     if mode not in IDKVQA_MODES:
         raise ValueError(f"mode must be one of {IDKVQA_MODES}, got {mode!r}")
@@ -471,7 +478,7 @@ def run_idkvqa_benchmark(
         vqa_latency = 0.0
         meta_first: dict[str, Any] = {}
 
-        if mode in ("two_pass_kg", "two_pass_kg_relaxed"):
+        if mode in ("two_pass_kg", "two_pass_kg_relaxed", "two_pass_kg_entropy"):
             # Pass 1: detection reasoning (same as kg mode)
             det_raw, det_latency, _, _, _ = _generate_chat(
                 loader, pil_image, DETECTION_SYSTEM, det_prompt,
@@ -560,6 +567,17 @@ def run_idkvqa_benchmark(
                     attr_type,
                     attr_value,
                     detection_reasoning,
+                )
+            elif mode == "two_pass_kg_entropy":
+                kg_hybrid = compute_kg_hybrid_prediction_entropy(
+                    raw_normalized,
+                    vqa_reasoning,
+                    kg_attributes,
+                    attr_type,
+                    attr_value,
+                    detection_reasoning,
+                    entropy=entropy,
+                    entropy_tau=tau,
                 )
             else:
                 kg_hybrid = compute_kg_hybrid_prediction(

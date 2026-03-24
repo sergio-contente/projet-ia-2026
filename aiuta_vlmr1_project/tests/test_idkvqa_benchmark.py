@@ -26,6 +26,10 @@ def test_two_pass_kg_relaxed_in_modes():
     assert "two_pass_kg_relaxed" in IDKVQA_MODES
 
 
+def test_two_pass_kg_entropy_in_modes():
+    assert "two_pass_kg_entropy" in IDKVQA_MODES
+
+
 def test_finalize_modes():
     r = finalize_for_mode(
         "raw",
@@ -96,6 +100,16 @@ def test_finalize_modes():
         kg_hybrid=LABEL_YES,
     )
     assert r7[0] == LABEL_YES and r7[1] is True and r7[2] is False
+
+    r8 = finalize_for_mode(
+        "two_pass_kg_entropy",
+        raw_normalized=LABEL_NO,
+        uncertainty_score=0.5,
+        threshold=0.5,
+        rule="entropy_above_tau_to_idk",
+        kg_hybrid=LABEL_YES,
+    )
+    assert r8[0] == LABEL_YES and r8[1] is True and r8[2] is False
 
 
 def test_overclaim_underclaim_metrics():

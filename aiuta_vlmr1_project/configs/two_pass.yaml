@@ -1,5 +1,6 @@
-# IDKVQA: use --mode two_pass_kg for strict KG hybrid (IDK when attr_type missing from KG broad);
-# use --mode two_pass_kg_relaxed for the same pipeline but relaxed final fallback (trust VLM when confident).
+# IDKVQA: use --mode two_pass_kg for strict KG hybrid (IDK when attr_type missing from KG broad),
+# --mode two_pass_kg_relaxed for relaxed fallback (trust VLM when confident), and
+# --mode two_pass_kg_entropy for relaxed fallback gated by entropy threshold.
 detector_type: vlmr1
 questioner_type: two_pass
 trigger_type: kg
@@ -10,7 +11,7 @@ model:
   device_map: auto
   max_new_tokens: 256
 idkvqa_eval:
-  entropy_threshold: 0.35
+  entropy_threshold: 0.09
   abstention_rule: entropy_above_tau_to_idk
   detection_max_new_tokens: 512
   vqa_max_new_tokens: 256

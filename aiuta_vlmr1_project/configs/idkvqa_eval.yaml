@@ -19,7 +19,7 @@ model:
 #   max_new_tokens: 1024
 
 idkvqa_eval:
-  entropy_threshold: 0.10
+  entropy_threshold: 0.09
   abstention_rule: entropy_above_tau_to_idk
   vqa_max_new_tokens: 256
   detection_max_new_tokens: 512
