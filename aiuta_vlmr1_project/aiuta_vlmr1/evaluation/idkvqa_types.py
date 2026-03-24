@@ -45,6 +45,7 @@ class QAExampleResult:
     uncertainty_score: float | None = None
     threshold: float | None = None
     abstained: bool = False
+    annotator_answers: dict[str, int] | None = None
 
     def to_serializable(self) -> dict[str, Any]:
         d = asdict(self)
@@ -52,12 +53,12 @@ class QAExampleResult:
         return d
 
 
-def compute_effective_reliability(
+def compute_effective_reliability_binary(
     predictions: list[str],
     ground_truths: list[str],
     cost: float = 1.0,
 ) -> float:
-    """Phi_c style: penalize wrong confident answers; IDK predictions are not 'incorrect' in the same slot."""
+    """Phi_c style (binary matching): penalize wrong confident answers; IDK scores 0."""
     n = len(predictions)
     if n == 0:
         return 0.0
@@ -70,6 +71,49 @@ def compute_effective_reliability(
         elif p != LABEL_IDK:
             n_wrong_confident += 1
     return (n_correct - cost * n_wrong_confident) / n
+
+
+# Backward compatibility alias
+compute_effective_reliability = compute_effective_reliability_binary
+
+
+def compute_effective_reliability_coin(
+    predictions: list[str],
+    ground_truths: list[str],
+    answers_list: list[dict[str, int] | None],
+    cost: float = 1.0,
+) -> float:
+    """
+    CoIN-paper VQAEvaluator formula: score = min(k/3, 1) if k>0, else -cost.
+
+    For each sample:
+    - If model predicts IDK: score = 0 (abstention is neutral).
+    - If model predicts Yes/No: k = number of annotators who agree with the prediction.
+      score = min(k/3, 1) if k > 0, else -cost.
+    - ER = mean(scores) * 100.
+
+    ``answers_list[i]`` is the annotator votes dict, e.g. {"Yes": 3, "No": 1, "I don't know": 1}.
+    If an entry is None, that sample is scored with binary matching as fallback.
+    """
+    n = len(predictions)
+    if n == 0:
+        return 0.0
+    total = 0.0
+    for pred, gt, answers in zip(predictions, ground_truths, answers_list, strict=True):
+        p = normalize_yes_no_idk(pred)
+        if p == LABEL_IDK:
+            total += 0.0
+            continue
+        if answers is None:
+            # Fallback to binary matching when annotator votes unavailable
+            total += 1.0 if p == gt else -cost
+            continue
+        k = answers.get(p, 0)
+        if k > 0:
+            total += min(k / 3.0, 1.0)
+        else:
+            total += -cost
+    return total / n
 
 
 def _metrics_core(
@@ -138,8 +182,18 @@ def aggregate_idkvqa_metrics(
             "max": round(max(entropies), 4),
         }
 
-    phi_1 = compute_effective_reliability(preds, gts, cost=1.0)
-    phi_05 = compute_effective_reliability(preds, gts, cost=0.5)
+    phi_1 = compute_effective_reliability_binary(preds, gts, cost=1.0)
+    phi_05 = compute_effective_reliability_binary(preds, gts, cost=0.5)
+
+    # CoIN-paper formula using annotator agreement (when available)
+    answers_list = [r.annotator_answers for r in results]
+    has_annotator_answers = any(a is not None for a in answers_list)
+    if has_annotator_answers:
+        phi_coin_1 = compute_effective_reliability_coin(preds, gts, answers_list, cost=1.0)
+        phi_coin_05 = compute_effective_reliability_coin(preds, gts, answers_list, cost=0.5)
+    else:
+        phi_coin_1 = None
+        phi_coin_05 = None
 
     cost_accounting = {
         "avg_num_model_calls": round(mean(r.num_model_calls for r in results), 4),
@@ -219,6 +273,9 @@ def aggregate_idkvqa_metrics(
         "effective_reliability": {
             "phi_c1_pct": round(phi_1 * 100, 2),
             "phi_c05_pct": round(phi_05 * 100, 2),
+            **({"phi_coin_c1_pct": round(phi_coin_1 * 100, 2),
+                "phi_coin_c05_pct": round(phi_coin_05 * 100, 2)}
+               if phi_coin_1 is not None else {}),
         },
         "entropy_summary": entropy_summary,
         "cost_accounting": cost_accounting,

@@ -40,6 +40,7 @@ from .idkvqa_types import (
 )
 from .uncertainty_abstention import AbstentionDecision, apply_uncertainty_threshold
 from .vlm_inference_utils import (
+    compute_answer_token_entropy,
     compute_first_token_entropy,
     compute_first_token_max_prob,
     estimate_reasoning_certainty,
@@ -247,6 +248,7 @@ def _build_qa_result(
         uncertainty_score=uncertainty_score,
         threshold=threshold,
         abstained=abstained,
+        annotator_answers=sample.get("answers"),
     )
 
 

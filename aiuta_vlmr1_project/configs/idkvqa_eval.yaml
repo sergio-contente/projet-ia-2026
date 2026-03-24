@@ -19,6 +19,8 @@ model:
 #   max_new_tokens: 1024
 
 idkvqa_eval:
+  # NOTE: tau=0.09 selected via sweep on val set; use with caution in comparisons
+  # with KG modes that use fixed heuristics (no threshold tuning on val).
   entropy_threshold: 0.09
   abstention_rule: entropy_above_tau_to_idk
   vqa_max_new_tokens: 256

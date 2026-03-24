@@ -13,7 +13,11 @@ from typing import Any, Callable
 
 import torch
 
-from ..evaluation.vlm_inference_utils import extract_answer_and_reasoning
+from ..evaluation.vlm_inference_utils import (
+    compute_answer_token_entropy,
+    compute_logits_entropy,
+    extract_answer_and_reasoning,
+)
 
 
 @dataclass
@@ -37,83 +41,6 @@ class EntropyEpisodeResult:
     final_entropy: float | None
     entropy_trajectory: list[float]
     step_logs: list[EntropyStepLog]
-
-
-def compute_logits_entropy(logits: torch.Tensor, vocab_size: int | None = None) -> float:
-    """Normalized Shannon entropy over a single-token logits vector."""
-    probs = torch.softmax(logits.float(), dim=-1)
-    log_probs = torch.log2(probs + 1e-10)
-    entropy = -(probs * log_probs).sum().item()
-    vs = probs.shape[0] if vocab_size is None else int(vocab_size)
-    max_entropy = torch.log2(torch.tensor(float(vs))).item() if vs > 0 else 1.0
-    return float(entropy / max_entropy) if max_entropy > 0 else 0.0
-
-
-def _find_subsequence_index(seq: list[int], sub: list[int]) -> int | None:
-    if not sub or len(sub) > len(seq):
-        return None
-    for i in range(len(seq) - len(sub) + 1):
-        if seq[i : i + len(sub)] == sub:
-            return i
-    return None
-
-
-def _answer_token_score_index(
-    generated_ids: list[int],
-    tokenizer: Any | None,
-) -> int | None:
-    """
-    Return index of the first answer token *after* `<answer>`.
-
-    The index matches `outputs.scores[index]`.
-    """
-    if tokenizer is None or not hasattr(tokenizer, "encode"):
-        return None
-
-    candidates = []
-    for marker in ("<answer>", " <answer>"):
-        try:
-            marker_ids = tokenizer.encode(marker, add_special_tokens=False)
-        except TypeError:
-            marker_ids = tokenizer.encode(marker)
-        if marker_ids:
-            candidates.append(marker_ids)
-
-    for marker_ids in candidates:
-        start = _find_subsequence_index(generated_ids, list(marker_ids))
-        if start is not None:
-            idx = start + len(marker_ids)
-            if idx < len(generated_ids):
-                return idx
-    return None
-
-
-def compute_answer_token_entropy(
-    outputs: Any,
-    processor: Any,
-    generated_ids: list[int],
-) -> tuple[float, torch.Tensor | None]:
-    """
-    Entropy on the first token of the final answer.
-
-    Preferred path:
-    - find `<answer>` token span in generated ids
-    - use logits of the first token after `<answer>`
-    """
-    scores = getattr(outputs, "scores", None)
-    if not scores:
-        return -1.0, None
-
-    tokenizer = getattr(processor, "tokenizer", None)
-    idx = _answer_token_score_index(generated_ids, tokenizer)
-    if idx is None or idx >= len(scores):
-        idx = 0  # fallback: first generated token
-
-    raw_logits = scores[idx][0]
-    logits = raw_logits.detach().cpu()
-    vocab_size = getattr(tokenizer, "vocab_size", None)
-    entropy = compute_logits_entropy(logits, vocab_size=vocab_size)
-    return float(entropy), logits
 
 
 def _generate_with_scores(
