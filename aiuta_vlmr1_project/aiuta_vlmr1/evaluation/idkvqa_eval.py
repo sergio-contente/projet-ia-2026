@@ -31,6 +31,7 @@ from .answer_normalization import LABEL_IDK, normalize_yes_no_idk
 from .idkvqa_kg import (
     build_kg_attributes_from_detection,
     classify_question_type,
+    compute_kg_entropy_modulation,
     compute_kg_hybrid_prediction,
     compute_kg_hybrid_prediction_entropy,
     compute_kg_hybrid_prediction_relaxed,
@@ -63,6 +64,7 @@ IDKVQA_MODES = (
     "two_pass_kg_entropy",
     "global_kg",
     "global_kg_entropy",
+    "global_kg_modulated",
 )
 
 # Matches the dataset prompt style (CoIN / VLM-R1 VQA protocol).
@@ -141,6 +143,9 @@ def _idkvqa_eval_options(config: Config) -> dict[str, Any]:
         "detection_max_new_tokens": int(d.get("detection_max_new_tokens", 512)),
         "second_pass_model_id": d.get("second_pass_model_id"),
         "second_pass_processor_id": d.get("second_pass_processor_id"),
+        "kg_boost_factor": float(d.get("kg_boost_factor", 0.5)),
+        "kg_penalty_factor": float(d.get("kg_penalty_factor", 2.0)),
+        "kg_entropy_cap": float(d.get("kg_entropy_cap", 0.30)),
     }
 
 
@@ -332,8 +337,9 @@ def finalize_for_mode(
         "two_pass_kg_entropy",
         "global_kg",
         "global_kg_entropy",
+        "global_kg_modulated",
     )
-    used_th = mode in ("threshold", "kg_threshold")
+    used_th = mode in ("threshold", "kg_threshold", "global_kg_modulated")
     abst_dec: AbstentionDecision | None = None
 
     if mode == "raw":
@@ -387,6 +393,10 @@ def finalize_for_mode(
     if mode == "global_kg_entropy":
         assert kg_hybrid is not None
         return kg_hybrid, True, False, False, None
+
+    if mode == "global_kg_modulated":
+        assert kg_hybrid is not None
+        return kg_hybrid, True, True, kg_hybrid == LABEL_IDK, None
 
     raise ValueError(f"Unknown mode {mode!r}; expected one of {IDKVQA_MODES}")
 
@@ -498,7 +508,7 @@ def run_idkvqa_benchmark(
     """
     if mode not in IDKVQA_MODES:
         raise ValueError(f"mode must be one of {IDKVQA_MODES}, got {mode!r}")
-    if mode in ("global_kg", "global_kg_entropy"):
+    if mode in ("global_kg", "global_kg_entropy", "global_kg_modulated"):
         if not global_kg_path:
             raise ValueError(f"global_kg_path is required for mode {mode!r}")
 
@@ -529,7 +539,7 @@ def run_idkvqa_benchmark(
 
     global_kg: SceneKnowledgeGraph | None = None
     global_kg_sample_to_hash: dict[str, str] = {}
-    if mode in ("global_kg", "global_kg_entropy"):
+    if mode in ("global_kg", "global_kg_entropy", "global_kg_modulated"):
         global_kg, global_kg_sample_to_hash = load_global_kg_for_eval(global_kg_path)
         print(
             f"[IDKVQA] Loaded global KG from {global_kg_path} "
@@ -564,7 +574,14 @@ def run_idkvqa_benchmark(
         vqa_latency = 0.0
 
         # Request token entropy for ``raw`` as well so offline threshold sweeps (``threshold_sweep``) work.
-        need_scores = mode in ("raw", "threshold", "kg_threshold", "global_kg", "global_kg_entropy")
+        need_scores = mode in (
+            "raw",
+            "threshold",
+            "kg_threshold",
+            "global_kg",
+            "global_kg_entropy",
+            "global_kg_modulated",
+        )
 
         num_model_calls = 0
         num_detector_calls = 0
@@ -771,6 +788,62 @@ def run_idkvqa_benchmark(
                     attr_value,
                     "",
                 )
+            meta_first["global_kg_sample_id"] = sid
+            meta_first["global_kg_image_hash"] = global_kg_sample_to_hash.get(
+                sid, stable_idkvqa_image_id(pil_image),
+            )
+            meta_first["global_kg_path"] = global_kg_path
+        elif mode == "global_kg_modulated":
+            assert global_kg is not None
+            sid = str(sample["sample_id"])
+            kg_attributes = dict(global_kg.get_attributes_for_image(sid))
+            if not kg_attributes:
+                fp = global_kg_sample_to_hash.get(sid) or stable_idkvqa_image_id(pil_image)
+                kg_attributes = dict(global_kg.get_attributes_for_image(fp))
+            num_kg_nodes = len(kg_attributes)
+            kg_strict = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
+
+            vqa_result = _generate_chat_full(
+                loader, pil_image, IDKVQA_SYSTEM, question,
+                max_new_tokens=vqa_tokens, output_scores=True,
+            )
+            vqa_latency = vqa_result.gen_time
+            entropy = vqa_result.entropy_first_token
+            entropy_orig = entropy
+            entropy_answer = vqa_result.entropy_answer_token
+            max_prob = vqa_result.max_prob
+            num_model_calls += 1
+            num_questions_asked = 1
+            raw_output = vqa_result.raw_output
+            raw_answer, vqa_reasoning = extract_answer_and_reasoning(raw_output)
+            raw_normalized = normalize_yes_no_idk(raw_answer)
+            detection_reasoning = ""
+
+            _, adjusted_entropy, kg_signal = compute_kg_entropy_modulation(
+                raw_normalized,
+                kg_attributes,
+                attr_type,
+                attr_value,
+                entropy,
+                boost_factor=float(opts["kg_boost_factor"]),
+                penalty_factor=float(opts["kg_penalty_factor"]),
+                cap=float(opts["kg_entropy_cap"]),
+            )
+            if adjusted_entropy is not None and adjusted_entropy > tau:
+                kg_hybrid = LABEL_IDK
+            else:
+                kg_hybrid = raw_normalized
+
+            entropy = adjusted_entropy
+            meta_first["kg_modulation"] = {
+                "original_entropy": entropy_orig,
+                "adjusted_entropy": adjusted_entropy,
+                "kg_signal": kg_signal,
+                "kg_attributes_found": num_kg_nodes,
+                "boost_factor": float(opts["kg_boost_factor"]),
+                "penalty_factor": float(opts["kg_penalty_factor"]),
+                "kg_entropy_cap": float(opts["kg_entropy_cap"]),
+            }
             meta_first["global_kg_sample_id"] = sid
             meta_first["global_kg_image_hash"] = global_kg_sample_to_hash.get(
                 sid, stable_idkvqa_image_id(pil_image),
@@ -998,8 +1071,10 @@ def main() -> None:
     if args.processor_id:
         cfg.model.processor_id = args.processor_id
 
-    if args.mode in ("global_kg", "global_kg_entropy") and not args.global_kg_path:
-        parser.error("--global-kg-path is required for modes global_kg and global_kg_entropy")
+    if args.mode in ("global_kg", "global_kg_entropy", "global_kg_modulated") and not args.global_kg_path:
+        parser.error(
+            "--global-kg-path is required for modes global_kg, global_kg_entropy, and global_kg_modulated",
+        )
 
     results = run_idkvqa_benchmark(
         cfg,

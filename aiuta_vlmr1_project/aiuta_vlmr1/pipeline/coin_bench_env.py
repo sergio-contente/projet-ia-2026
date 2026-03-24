@@ -60,7 +60,7 @@ class CoINBenchEnv:
         """Simulate a navigation action; counts toward path length for the offline proxy."""
         self._nav_steps += 1
         a = str(action).strip().lower()
-        if a in ("move_forward", "move_fwd", "forward"):
+        if a in ("move_forward", "move_fwd", "forward", "explore"):
             if len(self._paths) > 1:
                 self._idx = min(self._idx + 1, len(self._paths) - 1)
 
@@ -96,6 +96,13 @@ class CoINBenchEnv:
     @property
     def shortest_path_length(self) -> float:
         return 1.0
+
+    @property
+    def is_exhausted(self) -> bool:
+        """True when the current index is the last candidate (no further forward moves)."""
+        if not self._paths:
+            return True
+        return self._idx >= len(self._paths) - 1
 
     @property
     def target_facts(self) -> TargetFacts:

@@ -1,19 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=coin_bench_eval
+#SBATCH --job-name=coin_bench
+#SBATCH --partition=ENSTA-l40s
+#SBATCH --gres=gpu:1
+#SBATCH --time=04:00:00
 #SBATCH --output=results/logs/coin_bench-%j.out
 #SBATCH --error=results/logs/coin_bench-%j.err
-#SBATCH --time=04:00:00
-#SBATCH --partition=ENSTA-h100
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 
 set -euo pipefail
 set -x
-whoami && hostname && pwd
 
-# Override with: export COIN_PROJECT_ROOT=/path/to/aiuta_vlmr1_project
 cd "${COIN_PROJECT_ROOT:-$HOME/ai_project/aiuta_vlmr1_project}"
 
 if [ -f "${VENV_ACTIVATE:-$HOME/ai_project/.venv/bin/activate}" ]; then
@@ -21,10 +19,12 @@ if [ -f "${VENV_ACTIVATE:-$HOME/ai_project/.venv/bin/activate}" ]; then
   source "${VENV_ACTIVATE:-$HOME/ai_project/.venv/bin/activate}"
 fi
 
-MODE="${MODE:-entropy}"
-TAU="${TAU:-0.15}"
+MODE="${MODE:-entropy_nav}"
 SPLIT="${SPLIT:-val_seen}"
+TAU="${TAU:-0.15}"
+GLOBAL_KG_PATH="${GLOBAL_KG_PATH:-}"
 LIMIT_ARG="${LIMIT_ARG:-}"
+CONFIG="${CONFIG:-configs/idkvqa_eval.yaml}"
 
 mkdir -p "$HOME/hf_cache"
 export HF_HOME="${HF_HOME:-$HOME/hf_cache}"
@@ -37,22 +37,15 @@ mkdir -p results/logs results/coin_bench
 
 OUT="results/coin_bench/${MODE}_${SLURM_JOB_ID}.json"
 
-ARGS=(
-  python3 -m aiuta_vlmr1.pipeline.coin_bench_runner
-  --coin-bench-path "${COIN_BENCH_PATH:-$HOME/data/coin_bench}"
-  --mode "$MODE"
-  --tau "$TAU"
-  --split "$SPLIT"
-  --output "$OUT"
-)
-if [ -n "$LIMIT_ARG" ]; then
-  ARGS+=(--limit "$LIMIT_ARG")
-fi
-if [ -n "${CONFIG:-}" ]; then
-  ARGS+=(--config "$CONFIG")
-fi
+EXTRA_ARGS=()
+[ -n "$GLOBAL_KG_PATH" ] && EXTRA_ARGS+=(--global-kg-path "$GLOBAL_KG_PATH")
+[ -n "$LIMIT_ARG" ] && EXTRA_ARGS+=(--limit "$LIMIT_ARG")
 
-echo "=== CoIN-Bench eval MODE=${MODE} TAU=${TAU} SPLIT=${SPLIT} OUT=${OUT} ==="
-"${ARGS[@]}"
-
-echo "=== DONE ==="
+python -m aiuta_vlmr1.pipeline.coin_bench_runner \
+  --config "$CONFIG" \
+  --coin-bench-path "${COIN_BENCH_PATH:-$HOME/data/coin_bench}" \
+  --mode "$MODE" \
+  --split "$SPLIT" \
+  --tau "$TAU" \
+  --output "$OUT" \
+  "${EXTRA_ARGS[@]}"

@@ -2,7 +2,9 @@
 coin_bench_runner — CoIN-Bench offline evaluation with SR / SPL / NQ (static proxy).
 
 Modes:
-  - ``entropy``: ``run_entropy_coin_episode`` + ``CoINBenchEnv``
+  - ``entropy``: ``run_entropy_coin_episode`` + ``CoINBenchEnv`` (legacy)
+  - ``entropy_nav``: dual KG + entropy modulation (:mod:`entropy_nav_agent`)
+  - ``entropy_only``: entropy nav without global KG
   - ``aiuta_pipeline``: full ``AIUTAPipeline`` with simulated user
   - ``raw``: single VLM VQA call (no entropy gating)
 
@@ -24,21 +26,24 @@ from ..evaluation.coin_metrics import (
     compute_all_metrics,
     compute_metrics_by_split,
 )
+from ..evaluation.global_kg_io import load_global_kg_for_eval
+from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
 from ..utils.model_loader import ModelLoader
 from .aiuta_pipeline import AIUTAPipeline, PolicySignal
 from .coin_bench_env import CoINBenchEnv, coin_vqa_question, target_facts_from_coin_episode
 from .entropy_coin_agent import run_entropy_coin_episode, vlm_vqa_with_entropy
+from .entropy_nav_agent import NavEpisodeResult, run_nav_episode
 from .episode_runner import make_simulated_user
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="CoIN-Bench offline evaluation (entropy / AIUTA / raw).")
+    p = argparse.ArgumentParser(description="CoIN-Bench offline evaluation (navigation / entropy / AIUTA / raw).")
     p.add_argument("--coin-bench-path", type=str, required=True, help="Local CoIN-Bench root directory")
     p.add_argument(
         "--mode",
         type=str,
-        default="entropy",
-        choices=("entropy", "aiuta_pipeline", "raw"),
+        default="entropy_nav",
+        choices=("entropy", "entropy_nav", "entropy_only", "aiuta_pipeline", "raw"),
     )
     p.add_argument("--split", type=str, default="val_seen")
     p.add_argument("--limit", type=int, default=None)
@@ -47,6 +52,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output", type=str, default="results/coin_bench/eval.json")
     p.add_argument("--config", type=str, default=None, help="Optional YAML config for AIUTA / model IDs")
+    p.add_argument(
+        "--global-kg-path",
+        type=str,
+        default=None,
+        help="Pre-built global KG JSON (required for entropy_nav when using dual KG)",
+    )
+    p.add_argument("--boost-factor", type=float, default=0.5)
+    p.add_argument("--penalty-factor", type=float, default=2.0)
+    p.add_argument("--entropy-cap", type=float, default=0.30)
     return p
 
 
@@ -73,6 +87,38 @@ def _episode_result_to_json_dict(r: EpisodeResult) -> dict[str, Any]:
         "episode_log": list(r.episode_log),
     }
     return d
+
+
+def _nav_to_episode_result(nr: NavEpisodeResult, split: str) -> EpisodeResult:
+    log_payload = [
+        {
+            **asdict(sl),
+            "kg_signal": sl.kg_signal,
+        }
+        for sl in nr.step_logs
+    ]
+    log_payload.append(
+        {
+            "nav_meta": {
+                "stagnation_exit": nr.stagnation_exit,
+                "entropy_trajectory": nr.entropy_trajectory,
+                "final_answer": nr.final_answer,
+            }
+        }
+    )
+    return EpisodeResult(
+        episode_id=nr.episode_id,
+        split=split,
+        target_category=nr.target_category,
+        success=nr.success,
+        path_length=float(nr.path_length),
+        shortest_path_length=float(nr.shortest_path_length),
+        num_questions=nr.num_questions,
+        num_detections=int(nr.steps),
+        num_kg_nodes=len(nr.step_logs),
+        total_timesteps=int(nr.steps),
+        episode_log=log_payload,
+    )
 
 
 def _run_entropy_episode(
@@ -194,13 +240,17 @@ def _run_aiuta_episode(
 def run_coin_bench_evaluation(
     config: Config,
     coin_bench_path: str,
-    mode: str = "entropy",
+    mode: str = "entropy_nav",
     split: str = "val_seen",
     limit: int | None = None,
     tau: float = 0.15,
     max_steps_per_episode: int = 20,
     seed: int = 42,
     output_path: str = "results/coin_bench/eval.json",
+    global_kg_path: str | None = None,
+    boost_factor: float = 0.5,
+    penalty_factor: float = 2.0,
+    entropy_cap: float = 0.30,
 ) -> dict[str, Any]:
     random.seed(seed)
     rng = random.Random(seed)
@@ -211,18 +261,25 @@ def run_coin_bench_evaluation(
         episodes = episodes[: max(0, limit)]
 
     results: list[EpisodeResult] = []
+    nav_results: list[NavEpisodeResult] = []
     skipped_no_images = 0
 
     ml: ModelLoader | None = None
     model = processor = None
     pipeline: AIUTAPipeline | None = None
+    global_kg: SceneKnowledgeGraph | None = None
 
-    if mode in ("entropy", "raw"):
+    if mode in ("entropy", "entropy_nav", "entropy_only", "raw"):
         ml = ModelLoader.get_instance(config.model)
         model, processor = ml.model, ml.processor
     elif mode == "aiuta_pipeline":
         ask_dummy = lambda _q: "I don't know"
         pipeline = AIUTAPipeline(config, ask_human=ask_dummy)
+
+    if mode == "entropy_nav" and global_kg_path:
+        global_kg, _mapping = load_global_kg_for_eval(global_kg_path)
+    elif mode == "entropy_nav" and not global_kg_path:
+        raise ValueError("entropy_nav mode requires --global-kg-path")
 
     for ep in episodes:
         cands = loader.get_episode_image_candidates(split, ep)
@@ -234,25 +291,65 @@ def run_coin_bench_evaluation(
         env = CoINBenchEnv(ep, loader, cands, tf)
         question = coin_vqa_question(ep)
 
-        if mode == "entropy":
-            assert model is not None and processor is not None
-            er = _run_entropy_episode(
+        if mode == "entropy_nav":
+            assert model is not None and processor is not None and global_kg is not None
+            nr = run_nav_episode(
                 env,
-                question,
                 model,
                 processor,
+                question,
+                target_category=env.target_category,
+                global_kg=global_kg,
                 tau=tau,
                 max_steps=max_steps_per_episode,
-                rng=rng,
+                boost_factor=boost_factor,
+                penalty_factor=penalty_factor,
+                entropy_cap=entropy_cap,
+                max_new_tokens=config.model.max_new_tokens,
+            )
+            nav_results.append(nr)
+            results.append(_nav_to_episode_result(nr, split))
+        elif mode == "entropy_only":
+            assert model is not None and processor is not None
+            nr = run_nav_episode(
+                env,
+                model,
+                processor,
+                question,
+                target_category=env.target_category,
+                global_kg=None,
+                tau=tau,
+                max_steps=max_steps_per_episode,
+                boost_factor=boost_factor,
+                penalty_factor=penalty_factor,
+                entropy_cap=entropy_cap,
+                max_new_tokens=config.model.max_new_tokens,
+            )
+            nav_results.append(nr)
+            results.append(_nav_to_episode_result(nr, split))
+        elif mode == "entropy":
+            assert model is not None and processor is not None
+            results.append(
+                _run_entropy_episode(
+                    env,
+                    question,
+                    model,
+                    processor,
+                    tau=tau,
+                    max_steps=max_steps_per_episode,
+                    rng=rng,
+                )
             )
         elif mode == "raw":
             assert model is not None and processor is not None
-            er = _run_raw_episode(
-                env,
-                question,
-                model,
-                processor,
-                max_new_tokens=config.model.max_new_tokens,
+            results.append(
+                _run_raw_episode(
+                    env,
+                    question,
+                    model,
+                    processor,
+                    max_new_tokens=config.model.max_new_tokens,
+                )
             )
         else:
             assert pipeline is not None
@@ -262,9 +359,7 @@ def run_coin_bench_evaluation(
                 mode="description_based",
             )
             pipeline.set_ask_human(user_fn)
-            er = _run_aiuta_episode(env, pipeline, max_steps=max_steps_per_episode)
-
-        results.append(er)
+            results.append(_run_aiuta_episode(env, pipeline, max_steps=max_steps_per_episode))
 
     metrics = compute_all_metrics(results)
     by_split = compute_metrics_by_split(results)
@@ -281,6 +376,10 @@ def run_coin_bench_evaluation(
         "num_episodes_run": len(results),
         "metrics": metrics,
         "metrics_by_split": by_split,
+        "global_kg_path": global_kg_path,
+        "boost_factor": boost_factor,
+        "penalty_factor": penalty_factor,
+        "entropy_cap": entropy_cap,
         "offline_static_note": (
             "SR/SPL/NQ are computed on a static offline proxy: shortest_path_length=1, "
             "path_length = exploration actions + 1 commit. Not comparable to online Habitat CoIN."
@@ -288,6 +387,20 @@ def run_coin_bench_evaluation(
         "config": config.to_serializable_dict(),
         "per_episode": [_episode_result_to_json_dict(r) for r in results],
     }
+
+    if nav_results:
+        payload["nav_episodes"] = [
+            {
+                "episode_id": r.episode_id,
+                "success": r.success,
+                "steps": r.steps,
+                "final_answer": r.final_answer,
+                "stagnation_exit": r.stagnation_exit,
+                "entropy_trajectory": r.entropy_trajectory,
+                "num_step_logs": len(r.step_logs),
+            }
+            for r in nav_results
+        ]
 
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -311,6 +424,10 @@ def main(argv: list[str] | None = None) -> None:
         max_steps_per_episode=args.max_steps_per_episode,
         seed=args.seed,
         output_path=args.output,
+        global_kg_path=args.global_kg_path,
+        boost_factor=args.boost_factor,
+        penalty_factor=args.penalty_factor,
+        entropy_cap=args.entropy_cap,
     )
 
 

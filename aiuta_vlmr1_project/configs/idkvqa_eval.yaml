@@ -32,6 +32,10 @@ idkvqa_eval:
   abstention_rule: entropy_above_tau_to_idk
   vqa_max_new_tokens: 256
   detection_max_new_tokens: 512
+  # KG entropy modulation (mode global_kg_modulated): adjusts entropy, not the VLM label
+  kg_boost_factor: 0.5
+  kg_penalty_factor: 2.0
+  kg_entropy_cap: 0.30
 
 output_dir: ./results
 seed: 42

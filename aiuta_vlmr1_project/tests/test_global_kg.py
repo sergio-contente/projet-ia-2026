@@ -11,7 +11,11 @@ from aiuta_vlmr1.config import Config
 from aiuta_vlmr1.detector.base import Detection, DetectionResult
 from aiuta_vlmr1.evaluation.global_kg_io import load_global_kg_for_eval, save_global_kg_bundle
 from aiuta_vlmr1.evaluation.idkvqa_eval import IDKVQA_MODES
-from aiuta_vlmr1.evaluation.idkvqa_kg import subject_category_from_idkvqa_question
+from aiuta_vlmr1.evaluation.idkvqa_kg import (
+    compute_dual_kg_entropy_modulation,
+    compute_kg_entropy_modulation,
+    subject_category_from_idkvqa_question,
+)
 from aiuta_vlmr1.knowledge_graph.build_global_kg import (
     _pick_detection_for_question,
     _reasoning_slice_for_label,
@@ -55,6 +59,104 @@ def test_get_attributes_for_image():
 def test_global_kg_in_modes():
     assert "global_kg" in IDKVQA_MODES
     assert "global_kg_entropy" in IDKVQA_MODES
+
+
+def test_kg_entropy_modulation_agree():
+    ans, adj, sig = compute_kg_entropy_modulation(
+        "Yes",
+        {"color": "red"},
+        "color",
+        "red",
+        0.10,
+        boost_factor=0.5,
+        penalty_factor=2.0,
+    )
+    assert ans == "Yes"
+    assert adj is not None
+    assert abs(adj - 0.05) < 1e-6
+    assert sig == "agree"
+
+
+def test_kg_entropy_modulation_contradict():
+    ans, adj, sig = compute_kg_entropy_modulation(
+        "Yes",
+        {"color": "blue"},
+        "color",
+        "red",
+        0.10,
+        boost_factor=0.5,
+        penalty_factor=2.0,
+    )
+    assert ans == "Yes"
+    assert adj is not None
+    assert abs(adj - 0.20) < 1e-6
+    assert sig == "contradict"
+
+
+def test_kg_entropy_modulation_no_info():
+    ans, adj, sig = compute_kg_entropy_modulation(
+        "Yes",
+        {"material": "wood"},
+        "color",
+        "red",
+        0.10,
+    )
+    assert ans == "Yes"
+    assert adj is not None
+    assert abs(adj - 0.10) < 1e-6
+    assert sig == "no_info"
+
+
+def test_kg_entropy_modulation_idk_passthrough():
+    ans, adj, sig = compute_kg_entropy_modulation(
+        "I don't know",
+        {"color": "red"},
+        "color",
+        "red",
+        0.10,
+    )
+    assert ans == "I don't know"
+    assert adj is not None
+    assert abs(adj - 0.10) < 1e-6
+    assert sig == "no_info"
+
+
+def test_dual_kg_both_agree():
+    ans, adj, sigs = compute_dual_kg_entropy_modulation(
+        "Yes",
+        {"color": "red"},
+        {"color": "red"},
+        "color",
+        "red",
+        0.10,
+        boost_factor=0.5,
+        penalty_factor=2.0,
+    )
+    assert ans == "Yes"
+    assert adj is not None
+    assert abs(adj - 0.025) < 1e-6
+    assert sigs == {"global": "agree", "episode": "agree"}
+
+
+def test_dual_kg_agree_contradict():
+    ans, adj, sigs = compute_dual_kg_entropy_modulation(
+        "Yes",
+        {"color": "red"},
+        {"color": "blue"},
+        "color",
+        "red",
+        0.10,
+        boost_factor=0.5,
+        penalty_factor=2.0,
+    )
+    assert ans == "Yes"
+    assert adj is not None
+    assert abs(adj - 0.10) < 1e-6
+    assert sigs == {"global": "agree", "episode": "contradict"}
+
+
+def test_global_kg_modulated_in_modes():
+    assert "global_kg_modulated" in IDKVQA_MODES
 
 
 def test_save_load_json(tmp_path: Path):

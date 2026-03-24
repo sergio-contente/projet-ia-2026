@@ -137,6 +137,85 @@ def kg_answer_from_attributes(
     return LABEL_YES
 
 
+def compute_kg_entropy_modulation(
+    raw_predicted: str,
+    kg_attributes: dict[str, str],
+    attr_type: str,
+    attr_value: str | None,
+    entropy: float | None,
+    *,
+    boost_factor: float = 0.5,
+    penalty_factor: float = 2.0,
+    cap: float = 0.30,
+) -> tuple[str, float | None, str]:
+    """
+    Modulate VLM entropy using KG evidence. KG NEVER changes the answer text.
+
+    Returns ``(final_answer, adjusted_entropy, kg_signal)`` where ``kg_signal`` is one of
+    ``agree``, ``contradict``, ``no_info``.
+    """
+    rp = normalize_yes_no_idk(raw_predicted)
+    if entropy is None:
+        return raw_predicted, entropy, "no_info"
+    if rp == LABEL_IDK:
+        return raw_predicted, entropy, "no_info"
+
+    kg_answer = kg_answer_from_attributes(kg_attributes, attr_type, attr_value)
+    if kg_answer == LABEL_IDK:
+        return raw_predicted, entropy, "no_info"
+    if kg_answer == rp:
+        adjusted = float(entropy) * float(boost_factor)
+        signal = "agree"
+    else:
+        adjusted = float(entropy) * float(penalty_factor)
+        signal = "contradict"
+
+    adjusted = max(0.0, min(adjusted, float(cap)))
+    return raw_predicted, adjusted, signal
+
+
+def compute_dual_kg_entropy_modulation(
+    raw_predicted: str,
+    global_kg_attributes: dict[str, str],
+    episode_kg_attributes: dict[str, str],
+    attr_type: str,
+    attr_value: str | None,
+    entropy: float | None,
+    *,
+    boost_factor: float = 0.5,
+    penalty_factor: float = 2.0,
+    cap: float = 0.30,
+) -> tuple[str, float | None, dict[str, str]]:
+    """
+    Dual KG entropy modulation (global + episodic). Answer text unchanged; entropy adjusted twice.
+    """
+    rp = normalize_yes_no_idk(raw_predicted)
+    if entropy is None or rp == LABEL_IDK:
+        return raw_predicted, entropy, {"global": "no_info", "episode": "no_info"}
+
+    _, e1, sig_global = compute_kg_entropy_modulation(
+        raw_predicted,
+        global_kg_attributes,
+        attr_type,
+        attr_value,
+        entropy,
+        boost_factor=boost_factor,
+        penalty_factor=penalty_factor,
+        cap=1.0,
+    )
+    _, e2, sig_episode = compute_kg_entropy_modulation(
+        raw_predicted,
+        episode_kg_attributes,
+        attr_type,
+        attr_value,
+        e1,
+        boost_factor=boost_factor,
+        penalty_factor=penalty_factor,
+        cap=cap,
+    )
+    return raw_predicted, e2, {"global": sig_global, "episode": sig_episode}
+
+
 def build_kg_attributes_from_detection(
     detection_reasoning: str,
     category: str = "object",
