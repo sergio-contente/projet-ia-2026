@@ -63,6 +63,8 @@ def patch_payload_annotator_answers(
     answers_by_question: dict[str, dict[str, int]],
 ) -> tuple[int, int]:
     """Patch one loaded result payload in-place. Returns (patched, total)."""
+    if not isinstance(payload, dict):
+        return 0, 0
     per_sample = payload.get("per_sample")
     if not isinstance(per_sample, list):
         return 0, 0

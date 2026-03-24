@@ -2,6 +2,9 @@
 aiuta_vlmr1_project/results/logs/*.err
 aiuta_vlmr1_project/results/logs/*.out
 
+aiuta_vlmr1/results/logs/*.err
+aiuta_vlmr1/results/logs/*.out
+
 # Environment files
 .hf_env
 .env

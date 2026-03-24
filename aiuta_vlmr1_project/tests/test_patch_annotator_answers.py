@@ -33,3 +33,12 @@ def test_patch_payload_prefers_sample_id_then_question():
     assert payload["per_sample"][0]["annotator_answers"] == by_id["10"]
     assert payload["per_sample"][1]["annotator_answers"] == by_question["Q2"]
     assert payload["per_sample"][2]["annotator_answers"] == {"Yes": 5}
+
+
+def test_patch_payload_skips_non_dict_payload():
+    patched, total = patch_payload_annotator_answers(
+        [{"not": "a benchmark"}],
+        answers_by_id={},
+        answers_by_question={},
+    )
+    assert patched == 0 and total == 0

@@ -379,6 +379,9 @@ def test_fair_comparison_run(tmp_path):
     results_dir.mkdir()
     with open(results_dir / "raw_run.json", "w") as f:
         json.dump(result_data, f)
+    # Prior fair_comparison output is a JSON list — must not crash the loader.
+    with open(results_dir / "fair_table.json", "w") as f:
+        json.dump([{"mode": "raw", "accuracy_pct": 0}], f)
 
     output_path = tmp_path / "fair.json"
     rows = run_fair_comparison(str(results_dir), str(output_path))

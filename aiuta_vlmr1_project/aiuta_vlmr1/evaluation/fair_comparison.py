@@ -100,10 +100,15 @@ def run_fair_comparison(
     runs: dict[str, list[QAExampleResult]] = {}
 
     for json_file in sorted(results_path.glob("*.json")):
+        # Skip aggregate outputs (list of rows) and other non-benchmark JSON.
+        if json_file.name in ("fair_table.json",):
+            continue
         try:
             with open(json_file, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data, dict):
             continue
         mode = data.get("mode")
         per_sample = data.get("per_sample", [])
