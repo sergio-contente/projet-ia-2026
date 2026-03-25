@@ -10,7 +10,6 @@
 #SBATCH --mem=32G
 
 set -euo pipefail
-set -x
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate aiuta
 whoami && hostname && pwd
@@ -32,6 +31,7 @@ export HF_HUB_CACHE="${HF_HUB_CACHE:-$HOME/hf_cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HOME/hf_cache}"
 
 if [ -f "$HOME/.hf_env" ]; then source "$HOME/.hf_env"; fi
+set -x
 
 mkdir -p results/logs results/coin_bench
 

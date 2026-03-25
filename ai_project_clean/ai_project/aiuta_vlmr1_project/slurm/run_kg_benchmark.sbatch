@@ -10,7 +10,6 @@
 #SBATCH --mem=48G
 
 set -euo pipefail
-set -x
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate aiuta
 whoami && hostname && pwd
@@ -24,6 +23,7 @@ export TRANSFORMERS_CACHE="$HOME/hf_cache"
 
 if [ -f "$HOME/.hf_env" ]; then source "$HOME/.hf_env"; fi
 if [ -z "${HF_TOKEN:-}" ]; then echo "ERROR: HF_TOKEN not set"; exit 1; fi
+set -x
 
 pip install datasets --break-system-packages -q 2>/dev/null || true
 
