@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from ..config import TriggerConfig
 from ..self_questioner.base import RefinedDescription
@@ -17,10 +18,12 @@ class KGInteractionTrigger(AbstractInteractionTrigger):
         self,
         config: TriggerConfig,
         vlm_judge_fn: Callable[[str, str], bool] | None = None,
+        loader: Any = None,
     ):
         self._tau_stop = config.tau_stop
         self._tau_skip = config.tau_skip
         self._vlm_judge_fn = vlm_judge_fn
+        self._loader = loader
 
     def decide(self, description: RefinedDescription, target_facts: TargetFacts,
                kg: SceneKnowledgeGraph) -> TriggerAction:
@@ -32,10 +35,15 @@ class KGInteractionTrigger(AbstractInteractionTrigger):
             target_facts,
             tau_stop=self._tau_stop,
             vlm_judge_fn=getattr(self, "_vlm_judge_fn", None),
+            loader=getattr(self, "_loader", None),
         )
         node.alignment_score = score
-        explanation = GraphMatcher.explain_alignment(node, target_facts)
-        contradictions = GraphMatcher.find_contradictions(node, target_facts)
+        explanation = GraphMatcher.explain_alignment(
+            node, target_facts, loader=getattr(self, "_loader", None)
+        )
+        contradictions = GraphMatcher.find_contradictions(
+            node, target_facts, loader=getattr(self, "_loader", None)
+        )
         if contradictions:
             return TriggerAction(
                 type=ActionType.CONTINUE,

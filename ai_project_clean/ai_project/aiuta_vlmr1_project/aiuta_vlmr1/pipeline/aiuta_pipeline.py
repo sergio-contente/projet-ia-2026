@@ -78,7 +78,20 @@ class AIUTAPipeline:
 
     def _create_trigger(self, config: Config) -> AbstractInteractionTrigger:
         if config.trigger_type == TriggerType.KG:
-            return KGInteractionTrigger(config.trigger, vlm_judge_fn=self._vlm_judge_fn)
+            loader = None
+            try:
+                from ..utils.model_loader import ModelLoader
+
+                if ModelLoader._instances:
+                    key = next(iter(ModelLoader._instances))
+                    loader = ModelLoader._instances[key]
+            except Exception:
+                pass
+            return KGInteractionTrigger(
+                config.trigger,
+                vlm_judge_fn=self._vlm_judge_fn,
+                loader=loader,
+            )
         raise NotImplementedError(f"Trigger {config.trigger_type} not implemented")
 
     def set_ask_human(self, fn: Callable[[str], str]) -> None:
@@ -90,6 +103,15 @@ class AIUTAPipeline:
         self._vlm_judge_fn = fn
         if isinstance(self._trigger, KGInteractionTrigger):
             self._trigger._vlm_judge_fn = fn
+            if self._trigger._loader is None:
+                try:
+                    from ..utils.model_loader import ModelLoader
+
+                    if ModelLoader._instances:
+                        key = next(iter(ModelLoader._instances))
+                        self._trigger._loader = ModelLoader._instances[key]
+                except Exception:
+                    pass
 
     def new_episode(self, target_category: str) -> None:
         self.reset_episode(target_category)
