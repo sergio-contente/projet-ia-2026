@@ -71,7 +71,12 @@ class VLMr1ITMAdapter:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": pil_image},
+                        {
+                            "type": "image",
+                            "image": pil_image,
+                            "min_pixels": 256 * 28 * 28,
+                            "max_pixels": 512 * 28 * 28,
+                        },
                         {"type": "text", "text": question},
                     ],
                 },
