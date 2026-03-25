@@ -118,6 +118,9 @@ class AIUTAPipeline:
 
     def reset_episode(self, target_category: str) -> None:
         """Clear per-episode graph state and counters."""
+        from ..knowledge_graph.graph_matcher import clear_embedding_cache
+
+        clear_embedding_cache()
         self._kg.reset()
         self._kg.target_facts.category = target_category
         self._target_category = target_category

@@ -14,13 +14,21 @@ import numpy as np
 
 from .schema import ObjectNode, TargetFacts
 
+# Cache de embeddings por texto (válido durante o processo, resetado entre episódios se necessário)
+_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
+
+
+def clear_embedding_cache() -> None:
+    """Chamar no reset de episódio para liberar memória."""
+    global _EMBEDDING_CACHE
+    _EMBEDDING_CACHE.clear()
+
 
 def _get_text_embedding(text: str, loader: Any) -> np.ndarray | None:
-    """
-    Gera embedding de texto usando os hidden states do modelo já carregado.
-    Faz apenas um forward pass do encoder (sem geração), muito mais rápido.
-    Retorna None se falhar.
-    """
+    global _EMBEDDING_CACHE
+    cache_key = f"{id(loader)}:{text}"
+    if cache_key in _EMBEDDING_CACHE:
+        return _EMBEDDING_CACHE[cache_key]
     try:
         import torch
 
@@ -36,8 +44,7 @@ def _get_text_embedding(text: str, loader: Any) -> np.ndarray | None:
                 attention_mask=inputs.get("attention_mask"),
                 output_hidden_states=True,
             )
-        # Mean pooling da última camada hidden state
-        hidden = outputs.hidden_states[-1]  # (1, seq_len, hidden_dim)
+        hidden = outputs.hidden_states[-1]
         mask = (
             inputs.get("attention_mask", torch.ones_like(inputs["input_ids"]))
             .unsqueeze(-1)
@@ -48,6 +55,11 @@ def _get_text_embedding(text: str, loader: Any) -> np.ndarray | None:
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
+        _EMBEDDING_CACHE[cache_key] = embedding
+        # Limitar tamanho do cache para evitar OOM
+        if len(_EMBEDDING_CACHE) > 1000:
+            oldest = next(iter(_EMBEDDING_CACHE))
+            del _EMBEDDING_CACHE[oldest]
         return embedding
     except Exception:
         return None

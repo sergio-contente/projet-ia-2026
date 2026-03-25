@@ -41,9 +41,7 @@ class KGInteractionTrigger(AbstractInteractionTrigger):
         explanation = GraphMatcher.explain_alignment(
             node, target_facts, loader=getattr(self, "_loader", None)
         )
-        contradictions = GraphMatcher.find_contradictions(
-            node, target_facts, loader=getattr(self, "_loader", None)
-        )
+        contradictions = explanation.get("contradictions", [])
         if contradictions:
             return TriggerAction(
                 type=ActionType.CONTINUE,
