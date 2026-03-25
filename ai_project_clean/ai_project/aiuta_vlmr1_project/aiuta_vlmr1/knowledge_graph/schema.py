@@ -49,6 +49,7 @@ class ObjectNode:
     spatial_relations: list[SpatialRelation] = field(default_factory=list)
     is_target_candidate: bool = False
     alignment_score: float = -1.0
+    detected_crop: object = None  # np.ndarray | None — crop RGB do objeto detectado
 
     def get_attribute_value(self, name: str) -> str | None:
         attr = self.attributes.get(name)

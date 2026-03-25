@@ -36,6 +36,7 @@ class KGInteractionTrigger(AbstractInteractionTrigger):
             tau_stop=self._tau_stop,
             vlm_judge_fn=getattr(self, "_vlm_judge_fn", None),
             loader=getattr(self, "_loader", None),
+            detected_crop=getattr(node, "detected_crop", None),
         )
         node.alignment_score = score
         explanation = GraphMatcher.explain_alignment(

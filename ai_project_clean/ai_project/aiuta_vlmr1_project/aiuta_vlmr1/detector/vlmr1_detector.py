@@ -22,6 +22,18 @@ class VLMr1Detector(AbstractDetector):
         self._config = config
         self._loader = ModelLoader.get_instance(config.model)
 
+    @staticmethod
+    def _crop_for_bbox(observation: np.ndarray, bbox: list[float]) -> np.ndarray | None:
+        h, w = observation.shape[:2]
+        x1, y1, x2, y2 = bbox
+        xi1 = max(0, min(w - 1, int(round(x1))))
+        yi1 = max(0, min(h - 1, int(round(y1))))
+        xi2 = max(0, min(w, int(round(x2))))
+        yi2 = max(0, min(h, int(round(y2))))
+        if xi2 <= xi1 or yi2 <= yi1:
+            return None
+        return observation[yi1:yi2, xi1:xi2].copy()
+
     def _run_forward(
         self,
         messages: list,
@@ -124,6 +136,10 @@ class VLMr1Detector(AbstractDetector):
                 },
             ]
             _, result = self._run_forward(messages)
+            for d in result.detections:
+                crop = self._crop_for_bbox(observation, d.bbox)
+                if crop is not None:
+                    d.image = crop
             return result
         finally:
             if tmp_path is not None:

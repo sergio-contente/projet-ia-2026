@@ -110,6 +110,117 @@ class VLMr1Oracle:
             print(f"[VLMr1Oracle] Error: {e}")
             return "I don't know"
 
+    def answer_with_detection_image(
+        self,
+        detected_crop: np.ndarray,
+    ) -> bool:
+        """
+        Compara visualmente a instance_imagegoal com o crop do objeto detectado.
+        Retorna True se o VLM-R1 decide que são o mesmo objeto.
+        """
+        if self._instance_image is None or detected_crop is None:
+            return False
+        try:
+            if self._loader is None:
+                if ModelLoader._instances:
+                    key = next(iter(ModelLoader._instances))
+                    self._loader = ModelLoader._instances[key]
+                else:
+                    return False
+
+            import tempfile
+            import torch
+
+            from qwen_vl_utils import process_vision_info
+
+            pil_target = Image.fromarray(self._instance_image.astype(np.uint8))
+            pil_detected = Image.fromarray(detected_crop.astype(np.uint8))
+
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as t1:
+                path_target = t1.name
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as t2:
+                path_detected = t2.name
+
+            try:
+                pil_target.save(path_target, format="JPEG", quality=95)
+                pil_detected.save(path_detected, format="JPEG", quality=95)
+
+                url_target = f"file://{os.path.abspath(path_target)}"
+                url_detected = f"file://{os.path.abspath(path_detected)}"
+
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a visual comparison assistant. "
+                            "You will be shown two images of indoor objects. "
+                            "Answer only yes or no."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"This is the target {self._target_object} I am looking for:"},
+                            {
+                                "type": "image",
+                                "image": url_target,
+                                "min_pixels": 256 * 28 * 28,
+                                "max_pixels": 512 * 28 * 28,
+                            },
+                            {"type": "text", "text": f"This is the {self._target_object} I just detected:"},
+                            {
+                                "type": "image",
+                                "image": url_detected,
+                                "min_pixels": 256 * 28 * 28,
+                                "max_pixels": 512 * 28 * 28,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Are these the same specific object instance? "
+                                    "Look carefully at color, material, style, size, and distinctive features. "
+                                    "Answer only yes or no."
+                                ),
+                            },
+                        ],
+                    },
+                ]
+
+                proc = self._loader.processor
+                text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                img_in, vid_in = process_vision_info(messages)
+                inputs = proc(
+                    text=[text],
+                    images=img_in,
+                    videos=vid_in,
+                    padding=True,
+                    return_tensors="pt",
+                ).to(self._loader.device)
+
+                with torch.inference_mode():
+                    gen = self._loader.model.generate(
+                        **inputs,
+                        max_new_tokens=16,
+                        do_sample=False,
+                        use_cache=False,
+                    )
+
+                trimmed = [o[len(i):] for i, o in zip(inputs.input_ids, gen)]
+                raw = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+                raw_l = raw.strip().lower()
+                print(f"[VLMr1Oracle] Visual comparison → A: {raw_l!r}")
+                return raw_l.startswith("yes")
+
+            finally:
+                for p in [path_target, path_detected]:
+                    try:
+                        os.unlink(p)
+                    except FileNotFoundError:
+                        pass
+        except Exception as e:
+            print(f"[VLMr1Oracle] answer_with_detection_image error: {e}")
+            return False
+
     def reset(self) -> None:
         self._instance_image = None
         self._target_object = ""

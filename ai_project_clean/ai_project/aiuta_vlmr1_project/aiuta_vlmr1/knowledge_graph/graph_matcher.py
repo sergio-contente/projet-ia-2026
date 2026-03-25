@@ -8,8 +8,6 @@ import math
 from collections import Counter
 from typing import Any
 
-from collections.abc import Callable
-
 import numpy as np
 
 from .schema import ObjectNode, TargetFacts
@@ -159,21 +157,26 @@ class GraphMatcher:
         obj: ObjectNode,
         target: TargetFacts,
         tau_stop: float = 0.8,
-        vlm_judge_fn: Callable[[str, str], bool] | None = None,
-        loader: Any = None,
+        vlm_judge_fn=None,
+        loader=None,
+        detected_crop=None,
     ) -> float:
         score = GraphMatcher.compute_alignment(obj, target, loader=loader)
-
         if score >= tau_stop or score == 0.0:
             return score
-
         if vlm_judge_fn is None:
             return score
-
         obj_desc = obj.to_natural_language()
         target_desc = target.to_natural_language()
         try:
-            is_match = vlm_judge_fn(obj_desc, target_desc)
+            # Passa o crop se disponível — permite comparação visual
+            import inspect
+
+            sig = inspect.signature(vlm_judge_fn)
+            if "detected_crop" in sig.parameters:
+                is_match = vlm_judge_fn(obj_desc, target_desc, detected_crop=detected_crop)
+            else:
+                is_match = vlm_judge_fn(obj_desc, target_desc)
             if is_match:
                 return tau_stop
         except Exception:

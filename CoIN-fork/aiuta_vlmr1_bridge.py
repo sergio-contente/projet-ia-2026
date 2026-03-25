@@ -64,16 +64,26 @@ class VLMr1Bridge:
         self._oracle = None
 
     def _make_vlm_judge(self) -> Callable[[str, str], bool]:
-        """Returns (obj_desc, target_desc) -> bool using VLM-R1 oracle."""
+        """Returns (obj_desc, target_desc) -> bool usando comparação visual VLM-R1."""
 
-        def judge(obj_desc: str, target_desc: str) -> bool:
+        def judge(obj_desc: str, target_desc: str, detected_crop=None) -> bool:
             if not hasattr(self, "_oracle") or self._oracle is None:
                 return False
-            # Conta como interação com o usuário (oracle simula o usuário humano)
             try:
                 self.pipeline._num_questions_asked += 1
             except Exception:
                 pass
+
+            # Comparação visual se tiver o crop do objeto detectado
+            if detected_crop is not None:
+                try:
+                    result = self._oracle.answer_with_detection_image(detected_crop)
+                    print(f"[VLMr1Bridge] Visual judge → {'yes' if result else 'no'}")
+                    return result
+                except Exception as e:
+                    print(f"[VLMr1Bridge] Visual judge fallback to text: {e}")
+
+            # Fallback textual
             question = (
                 f"I am looking for: {target_desc}\n"
                 f"I detected: {obj_desc}\n"

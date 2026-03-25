@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
 import torch
 
 from ..config import Config
@@ -77,6 +78,8 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         node = kg.add_object_merged(
             category=detection.label, bbox=detection.bbox, timestep=timestep,
         )
+        if hasattr(detection, "image") and detection.image is not None:
+            node.detected_crop = np.array(detection.image)
 
         if extraction.attributes:
             kg.update_attributes(node.obj_id, extraction.attributes)

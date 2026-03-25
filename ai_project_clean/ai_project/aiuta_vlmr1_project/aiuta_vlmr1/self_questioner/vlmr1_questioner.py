@@ -1,5 +1,8 @@
 """vlmr1_questioner.py — Self-Questioner using VLM-R1 reasoning. 0 extra calls."""
 from __future__ import annotations
+
+import numpy as np
+
 from ..detector.base import Detection
 from ..knowledge_graph.schema import TargetFacts
 from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
@@ -16,6 +19,8 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
             queried_objects=[], timestep=timestep,
         )
         node = kg.add_object_merged(category=detection.label, bbox=detection.bbox, timestep=timestep)
+        if hasattr(detection, "image") and detection.image is not None:
+            node.detected_crop = np.array(detection.image)
         if extraction.attributes:
             kg.update_attributes(node.obj_id, extraction.attributes)
         for rel in extraction.spatial_relations:
