@@ -150,7 +150,6 @@ class ObjectPointCloudMap:
             signal_value = getattr(signal, "value", str(signal)) if signal is not None else ""
             print(f"[VLMr1Bridge] pipeline_step signal={signal_value!r} for {object_name}")
             if str(signal_value).lower() == "stop":
-                # Confirmed match: add to target clouds used for navigation.
                 if object_name in self.clouds:
                     self.clouds[object_name] = np.concatenate((self.clouds[object_name], global_cloud), axis=0)
                 else:
