@@ -124,6 +124,8 @@ class BaseObjectNavPolicy(BasePolicy):
             vlm_agent_brain=self.vlm_agent_brain,
             llm_agent_brain=self.llm_agent_brain,
             vlm_oracle=self.VLM_ORACLE,
+            vlmr1_bridge=self._vlmr1_bridge,
+            use_vlmr1=self._use_vlmr1,
         )
         self._depth_image_shape = tuple(depth_image_shape)
         self._pointnav_stop_radius = pointnav_stop_radius
@@ -167,8 +169,10 @@ class BaseObjectNavPolicy(BasePolicy):
         self._called_stop = False
         if self._compute_frontiers:
             self._obstacle_map.reset()
-        self.llm_agent_brain.reset()
-        self.VLM_ORACLE.reset()
+        if self.llm_agent_brain is not None:
+            self.llm_agent_brain.reset()
+        if self.VLM_ORACLE is not None:
+            self.VLM_ORACLE.reset()
         self._did_reset = True
         self.cached_room_likelihoods = None
 
@@ -188,10 +192,11 @@ class BaseObjectNavPolicy(BasePolicy):
         """
         if self._num_steps == 0:
             print(Fore.LIGHTCYAN_EX + "[INFO] Setting the Instance Image - accessible to the VLM-Simulated user (oracle)")
-            self.VLM_ORACLE.set_instance_image(
-                instance_image=observations["instance_imagegoal"].cpu().squeeze().numpy(),
-                target_object=self._target_object,
-            )
+            if self.VLM_ORACLE is not None:
+                self.VLM_ORACLE.set_instance_image(
+                    instance_image=observations["instance_imagegoal"].cpu().squeeze().numpy(),
+                    target_object=self._target_object,
+                )
 
 
         del observations["instance_imagegoal"]
@@ -222,7 +227,10 @@ class BaseObjectNavPolicy(BasePolicy):
         goal = self._get_target_object_location(robot_xy)
 
         if self._num_steps == 400:
-            self._object_map.get_to_the_best_one(object_name=self._target_object.split("|")[0])
+            if self._use_vlmr1:
+                self._object_map.get_to_the_best_one(object_name=self._target_object.split("|")[0])
+            else:
+                self._object_map.get_to_the_best_one(object_name=self._target_object.split("|")[0])
 
         if not self._done_initializing:  # Initialize
             mode = "initialize"
@@ -247,6 +255,13 @@ class BaseObjectNavPolicy(BasePolicy):
         return pointnav_action, rnn_hidden_states
 
     def how_many_question_to_the_user(self, ep_id):
+        if self._use_vlmr1 and self._vlmr1_bridge is not None:
+            try:
+                return int(getattr(self._vlmr1_bridge.pipeline, "num_questions_asked", 0))
+            except Exception:
+                return 0
+        if self.VLM_ORACLE is None:
+            return 0
         return self.VLM_ORACLE.how_many_question_to_the_user(ep_id)
 
     def _pre_step(self, observations: "TensorDict", masks: Tensor) -> None:
@@ -254,6 +269,9 @@ class BaseObjectNavPolicy(BasePolicy):
         if not self._did_reset and masks[0] == 0:
             self._reset()
             self._target_object = observations["objectgoal"]
+            if self._use_vlmr1 and self._vlmr1_bridge is not None:
+                # Initialize once per episode; do NOT reset per frame.
+                self._vlmr1_bridge.new_episode(self._target_object.split("|")[0])
         try:
             self._cache_observations(observations)
         except IndexError as e:
@@ -323,7 +341,15 @@ class BaseObjectNavPolicy(BasePolicy):
         self._non_coco_caption = " . ".join(target_classes) + " ."
         if self._use_vlmr1 and self._vlmr1_bridge is not None:
             # Use our local VLM-R1 detector and convert to VLFM's ObjectDetections.
-            self._vlmr1_bridge.new_episode(target_classes[0])
+            every = int(os.environ.get("COIN_VLMR1_DETECT_EVERY", "5"))
+            if every > 1 and (self._num_steps % every) != 0:
+                return ObjectDetections(
+                    boxes=torch.zeros((0, 4)),
+                    logits=torch.zeros((0,)),
+                    phrases=[],
+                    image_source=img,
+                    fmt="xyxy",
+                )
             out = self._vlmr1_bridge.detect(img, timestep=self._num_steps)
             h, w = img.shape[:2]
             boxes = []

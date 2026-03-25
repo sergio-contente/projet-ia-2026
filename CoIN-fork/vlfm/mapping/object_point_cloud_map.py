@@ -1,6 +1,8 @@
 # Copyright (c) 2023 Boston Dynamics AI Institute LLC. All rights reserved.
 
-from typing import Dict, Union
+from __future__ import annotations
+
+from typing import Any, Dict, Union
 import cv2
 import numpy as np
 import open3d as o3d
@@ -27,8 +29,11 @@ class ObjectPointCloudMap:
         self,
         erosion_size: float,
         vlm_agent_brain,
-        llm_agent_brain: LLM_History,
-        vlm_oracle: VLMOracle,
+        llm_agent_brain: LLM_History | None,
+        vlm_oracle: VLMOracle | None,
+        *,
+        vlmr1_bridge: Any | None = None,
+        use_vlmr1: bool = False,
     ) -> None:
         self._erosion_size = erosion_size
         self.last_target_coord: Union[np.ndarray, None] = None
@@ -36,18 +41,25 @@ class ObjectPointCloudMap:
         self.object_unique_id = 1
         self.detection_cloud = {}  # same logic as clouds, for understand if a detection is seen or not
 
-        self.vlm_agent_brain: VLM_History = vlm_agent_brain
-        self.llm_agent_brain: LLM_History = llm_agent_brain
-        self.vlm_oracle: VLMOracle = vlm_oracle
+        self.vlm_agent_brain: VLM_History | None = vlm_agent_brain
+        self.llm_agent_brain: LLM_History | None = llm_agent_brain
+        self.vlm_oracle: VLMOracle | None = vlm_oracle
+        self._use_vlmr1 = bool(use_vlmr1)
+        self._vlmr1_bridge = vlmr1_bridge
 
 
 
     def reset(self, ep_id, target_obj) -> None:
         self.clouds = {}
         self.last_target_coord = None
-        self.vlm_agent_brain.reset()
-        self.llm_agent_brain.reset()
-        self.vlm_oracle.reset()
+        self.detection_cloud = {}
+        self.object_unique_id = 1
+        if self.vlm_agent_brain is not None:
+            self.vlm_agent_brain.reset()
+        if self.llm_agent_brain is not None:
+            self.llm_agent_brain.reset()
+        if self.vlm_oracle is not None:
+            self.vlm_oracle.reset()
 
     def has_object(self, target_class: str) -> bool:
         return target_class in self.clouds and len(self.clouds[target_class]) > 0
@@ -71,11 +83,17 @@ class ObjectPointCloudMap:
         If we reach max_step - offset, we have to go to the best detection
         """
         print(Fore.YELLOW + "Navigating to the best detection of object: ", object_name)
+        if self._use_vlmr1:
+            # Fallback without LLM brains: navigate to the densest detection cloud we have.
+            if object_name in self.detection_cloud and len(self.detection_cloud[object_name]) > 0:
+                self.clouds[object_name] = self.detection_cloud[object_name]
+            return
+        if self.llm_agent_brain is None:
+            return
         global_cloud = self.llm_agent_brain.get_best_object_based_on_score()
-        if not global_cloud is None:
-            self.clouds[object_name] = (
-                global_cloud  # we reset all the point cloud to the best one, so we can navigate to it
-            )
+        if global_cloud is not None:
+            # reset all the point cloud to the best one, so we can navigate to it
+            self.clouds[object_name] = global_cloud
 
     def update_map(
         self,
@@ -99,27 +117,45 @@ class ObjectPointCloudMap:
         if len(local_cloud) == 0:
             return
 
-        # If running with local VLM-R1, skip all OpenAI/LLM/LLaVA modules.
-        # We only update the point cloud bookkeeping so VLFM navigation can proceed.
-        import os
-        if bool(int(os.environ.get("COIN_USE_VLMR1", "0"))):
-            global_cloud = transform_points(tf_camera_to_episodic, local_cloud)
+        if self._use_vlmr1:
+            # CoIN + VLM-R1 path: keep point-cloud extraction + seen-detection logic,
+            # but delegate STOP/CONTINUE decision to AIUTA pipeline via bridge.
             within_range = (local_cloud[:, 0] <= max_depth * 0.95) * 1.0
             within_range = within_range.astype(np.float32)
             within_range[within_range == 0] = np.random.rand()
+            global_cloud = transform_points(tf_camera_to_episodic, local_cloud)
             global_cloud = np.concatenate((global_cloud, within_range[:, None]), axis=1)
 
+            # Skip expensive pipeline call if we've already seen this detection.
+            if self.is_detection_seen(global_cloud, object_name):
+                if object_name in self.clouds:
+                    self.clouds[object_name] = global_cloud
+                return False
+
+            # Always keep detections to enable fallback navigation.
             if object_name in self.detection_cloud:
-                self.detection_cloud[object_name] = np.concatenate((self.detection_cloud[object_name], global_cloud), axis=0)
+                self.detection_cloud[object_name] = np.concatenate(
+                    (self.detection_cloud[object_name], global_cloud), axis=0
+                )
             else:
                 self.detection_cloud[object_name] = global_cloud
 
-            # Conservative: do not mark as target immediately; just provide detections for navigation.
-            if object_name in self.clouds:
-                self.clouds[object_name] = np.concatenate((self.clouds[object_name], global_cloud), axis=0)
-            else:
-                self.clouds[object_name] = global_cloud
-            return True
+            # Run AIUTA pipeline decision.
+            if self._vlmr1_bridge is None:
+                # No bridge: behave conservatively (do not confirm as target).
+                return False
+
+            step_res = self._vlmr1_bridge.pipeline_step(rgb_image, timestep=total_num_steps)
+            signal = getattr(step_res, "signal", None)
+            signal_value = getattr(signal, "value", str(signal)) if signal is not None else ""
+            if str(signal_value).lower() == "stop":
+                # Confirmed match: add to target clouds used for navigation.
+                if object_name in self.clouds:
+                    self.clouds[object_name] = np.concatenate((self.clouds[object_name], global_cloud), axis=0)
+                else:
+                    self.clouds[object_name] = global_cloud
+                return True
+            return False
 
         # For second-class, bad detections that are too offset or out of range, we
         # assign a random number to the last column of its point cloud that can later
@@ -199,6 +235,13 @@ class ObjectPointCloudMap:
         ##### Self-questioner
         #######
         # generate a description of the current observation the on-board VLM
+        if self.vlm_agent_brain is None or self.llm_agent_brain is None or self.vlm_oracle is None:
+            raise RuntimeError(
+                "ObjectPointCloudMap.update_map() entered the original CoIN path, "
+                "but vlm_agent_brain/llm_agent_brain/vlm_oracle are None. "
+                "Disable COIN_USE_VLMR1 or ensure brains are initialized."
+            )
+
         distractor_description = self.vlm_agent_brain.get_description_of_the_image(rgb_image, prompt=llava_prompt)
 
         # retrieve more questions to self-ask regarding the detected object using LLM. These questions are open-ended
