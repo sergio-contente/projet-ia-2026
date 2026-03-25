@@ -76,11 +76,17 @@ class BaseObjectNavPolicy(BasePolicy):
         if self._use_vlmr1:
             # Local VLM-R1 detector + KG pipeline (no OpenAI/GPT).
             from aiuta_vlmr1_bridge import VLMr1Bridge
+            from vlfm.oracle.vlmr1_oracle import VLMr1Oracle
 
-            self._vlmr1_bridge = VLMr1Bridge(config_path=os.environ.get("AIUTA_VLMR1_CONFIG"))
+            self._vlmr1_oracle = VLMr1Oracle()
+            self._vlmr1_bridge = VLMr1Bridge(
+                config_path=os.environ.get("AIUTA_VLMR1_CONFIG"),
+                ask_human=None,
+            )
             self._object_detector = None
             self._coco_object_detector = None
         else:
+            self._vlmr1_oracle = None
             self._vlmr1_bridge = None
             self._object_detector = GroundingDINOClient(port=int(os.environ.get("GROUNDING_DINO_PORT", "12181")))
             self._coco_object_detector = YOLOv7Client(port=int(os.environ.get("YOLOV7_PORT", "12184")))
@@ -173,6 +179,8 @@ class BaseObjectNavPolicy(BasePolicy):
             self.llm_agent_brain.reset()
         if self.VLM_ORACLE is not None:
             self.VLM_ORACLE.reset()
+        if hasattr(self, "_vlmr1_oracle") and self._vlmr1_oracle is not None:
+            self._vlmr1_oracle.reset()
         self._did_reset = True
         self.cached_room_likelihoods = None
 
@@ -192,7 +200,13 @@ class BaseObjectNavPolicy(BasePolicy):
         """
         if self._num_steps == 0:
             print(Fore.LIGHTCYAN_EX + "[INFO] Setting the Instance Image - accessible to the VLM-Simulated user (oracle)")
-            if self.VLM_ORACLE is not None:
+            if self._use_vlmr1 and getattr(self, "_vlmr1_oracle", None) is not None:
+                instance_img = observations["instance_imagegoal"].cpu().squeeze().numpy()
+                self._vlmr1_oracle.set_instance_image(instance_img, self._target_object)
+                self._vlmr1_bridge.pipeline.set_ask_human(
+                    lambda q: self._vlmr1_oracle.answer(q)
+                )
+            elif self.VLM_ORACLE is not None:
                 self.VLM_ORACLE.set_instance_image(
                     instance_image=observations["instance_imagegoal"].cpu().squeeze().numpy(),
                     target_object=self._target_object,
