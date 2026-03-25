@@ -1,6 +1,8 @@
 """kg_trigger.py — KG-based Interaction Trigger. 0 LLM calls."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ..config import TriggerConfig
 from ..self_questioner.base import RefinedDescription
 from ..knowledge_graph.schema import TargetFacts
@@ -11,16 +13,26 @@ from .base import AbstractInteractionTrigger, TriggerAction, ActionType
 
 
 class KGInteractionTrigger(AbstractInteractionTrigger):
-    def __init__(self, config: TriggerConfig):
+    def __init__(
+        self,
+        config: TriggerConfig,
+        vlm_judge_fn: Callable[[str, str], bool] | None = None,
+    ):
         self._tau_stop = config.tau_stop
         self._tau_skip = config.tau_skip
+        self._vlm_judge_fn = vlm_judge_fn
 
     def decide(self, description: RefinedDescription, target_facts: TargetFacts,
                kg: SceneKnowledgeGraph) -> TriggerAction:
         if not description.is_valid or description.object_node is None:
             return TriggerAction(type=ActionType.CONTINUE, reason="Invalid detection")
         node = description.object_node
-        score = GraphMatcher.compute_alignment(node, target_facts)
+        score = GraphMatcher.compute_alignment_with_vlm_fallback(
+            node,
+            target_facts,
+            tau_stop=self._tau_stop,
+            vlm_judge_fn=getattr(self, "_vlm_judge_fn", None),
+        )
         node.alignment_score = score
         explanation = GraphMatcher.explain_alignment(node, target_facts)
         contradictions = GraphMatcher.find_contradictions(node, target_facts)

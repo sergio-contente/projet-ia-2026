@@ -43,9 +43,15 @@ class PipelineStepResult:
 
 
 class AIUTAPipeline:
-    def __init__(self, config: Config, ask_human: Callable[[str], str] | None = None):
+    def __init__(
+        self,
+        config: Config,
+        ask_human: Callable[[str], str] | None = None,
+        vlm_judge_fn: Callable[[str, str], bool] | None = None,
+    ):
         self._config = config
         self._ask_human = ask_human or (lambda q: "I don't know")
+        self._vlm_judge_fn = vlm_judge_fn
 
         self._detector = self._create_detector(config)
         self._questioner = self._create_questioner(config)
@@ -72,12 +78,18 @@ class AIUTAPipeline:
 
     def _create_trigger(self, config: Config) -> AbstractInteractionTrigger:
         if config.trigger_type == TriggerType.KG:
-            return KGInteractionTrigger(config.trigger)
+            return KGInteractionTrigger(config.trigger, vlm_judge_fn=self._vlm_judge_fn)
         raise NotImplementedError(f"Trigger {config.trigger_type} not implemented")
 
     def set_ask_human(self, fn: Callable[[str], str]) -> None:
         """Replace the human callback (used by offline runners and tests)."""
         self._ask_human = fn
+
+    def set_vlm_judge(self, fn: Callable[[str, str], bool] | None) -> None:
+        """Optional judge (obj_desc, target_desc) -> bool for inconclusive alignment scores."""
+        self._vlm_judge_fn = fn
+        if isinstance(self._trigger, KGInteractionTrigger):
+            self._trigger._vlm_judge_fn = fn
 
     def new_episode(self, target_category: str) -> None:
         self.reset_episode(target_category)

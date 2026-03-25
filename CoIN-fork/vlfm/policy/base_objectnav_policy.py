@@ -206,6 +206,7 @@ class BaseObjectNavPolicy(BasePolicy):
                 self._vlmr1_bridge.pipeline.set_ask_human(
                     lambda q: self._vlmr1_oracle.answer(q)
                 )
+                self._vlmr1_bridge.set_oracle(self._vlmr1_oracle)
             elif self.VLM_ORACLE is not None:
                 self.VLM_ORACLE.set_instance_image(
                     instance_image=observations["instance_imagegoal"].cpu().squeeze().numpy(),

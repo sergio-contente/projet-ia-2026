@@ -8,11 +8,49 @@ import math
 from collections import Counter
 from typing import Any
 
+from collections.abc import Callable
+
 from .schema import ObjectNode, TargetFacts
 
 
+SYNONYMS: dict[str, str] = {
+    "wooden": "wood",
+    "hardwood": "wood",
+    "metallic": "metal",
+    "grey": "gray",
+    "big": "large",
+    "tiny": "small",
+    "dark brown": "brown",
+    "light brown": "brown",
+    "in the bedroom": "bedroom",
+    "in the kitchen": "kitchen",
+    "in the bathroom": "bathroom",
+    "in the living room": "living_room",
+    "bedroom": "bedroom",
+    "kitchen": "kitchen",
+}
+
+
 def _norm(s: str) -> str:
-    return s.strip().lower()
+    return " ".join(s.strip().lower().split())
+
+
+def _canonical(val: str) -> str:
+    x = _norm(val)
+    for key in sorted(SYNONYMS.keys(), key=len, reverse=True):
+        if key in x:
+            x = x.replace(key, SYNONYMS[key])
+    return " ".join(x.split())
+
+
+def _semantic_match(obj_val: str, target_val: str) -> bool:
+    o = _canonical(obj_val)
+    t = _canonical(target_val)
+    if o == t:
+        return True
+    if t in o or o in t:
+        return True
+    return False
 
 
 class GraphMatcher:
@@ -27,7 +65,7 @@ class GraphMatcher:
             total += 1
             obj_val = obj.get_attribute_value(attr_name)
             if obj_val is not None:
-                if _norm(obj_val) == _norm(target_val):
+                if _semantic_match(obj_val, target_val):
                     matched += 1
                 else:
                     contradicted += 1
@@ -35,7 +73,7 @@ class GraphMatcher:
             total += 1
             obj_val = obj.get_attribute_value(attr_name)
             if obj_val is not None:
-                if _norm(obj_val) == _norm(neg_val):
+                if _semantic_match(obj_val, neg_val):
                     contradicted += 1
                 else:
                     matched += 1
@@ -44,6 +82,28 @@ class GraphMatcher:
         if total == 0:
             return -1.0
         return matched / total
+
+    @staticmethod
+    def compute_alignment_with_vlm_fallback(
+        obj: ObjectNode,
+        target: TargetFacts,
+        tau_stop: float = 0.8,
+        vlm_judge_fn: Callable[[str, str], bool] | None = None,
+    ) -> float:
+        score = GraphMatcher.compute_alignment(obj, target)
+        if score >= tau_stop or score == 0.0:
+            return score
+        if vlm_judge_fn is None:
+            return score
+        obj_desc = obj.to_natural_language()
+        target_desc = target.to_natural_language()
+        try:
+            is_match = vlm_judge_fn(obj_desc, target_desc)
+            if is_match:
+                return tau_stop
+        except Exception:
+            pass
+        return score
 
     @staticmethod
     def explain_alignment(obj: ObjectNode, target: TargetFacts) -> dict[str, Any]:
@@ -56,14 +116,14 @@ class GraphMatcher:
             obj_val = obj.get_attribute_value(attr_name)
             if obj_val is None:
                 missing.append(attr_name)
-            elif _norm(obj_val) != _norm(target_val):
+            elif not _semantic_match(obj_val, target_val):
                 contradictions.append(f"{attr_name}: obj={obj_val!r} vs target={target_val!r}")
             else:
                 matched.append({"attribute": attr_name, "value": obj_val})
 
         for attr_name, neg_val in target.negative_attributes.items():
             obj_val = obj.get_attribute_value(attr_name)
-            if obj_val is not None and _norm(obj_val) == _norm(neg_val):
+            if obj_val is not None and _semantic_match(obj_val, neg_val):
                 contradictions.append(f"{attr_name}: obj={obj_val!r} matches forbidden {neg_val!r}")
 
         score = GraphMatcher.compute_alignment(obj, target)
@@ -81,11 +141,11 @@ class GraphMatcher:
         contradictions = []
         for attr_name, target_val in target.known_attributes.items():
             obj_val = obj.get_attribute_value(attr_name)
-            if obj_val is not None and _norm(obj_val) != _norm(target_val):
+            if obj_val is not None and not _semantic_match(obj_val, target_val):
                 contradictions.append(f"{attr_name}: obj={obj_val}, target={target_val}")
         for attr_name, neg_val in target.negative_attributes.items():
             obj_val = obj.get_attribute_value(attr_name)
-            if obj_val is not None and _norm(obj_val) == _norm(neg_val):
+            if obj_val is not None and _semantic_match(obj_val, neg_val):
                 contradictions.append(f"{attr_name}: obj={obj_val}, target NOT {neg_val}")
         return contradictions
 

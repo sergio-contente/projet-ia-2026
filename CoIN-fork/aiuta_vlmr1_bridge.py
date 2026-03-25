@@ -61,6 +61,28 @@ class VLMr1Bridge:
         self.detector = VLMr1Detector(self.config)
         self.pipeline = AIUTAPipeline(self.config, ask_human=ask_human)
         self._target_category: str = ""
+        self._oracle = None
+
+    def _make_vlm_judge(self) -> Callable[[str, str], bool]:
+        """Returns (obj_desc, target_desc) -> bool using VLM-R1 oracle."""
+
+        def judge(obj_desc: str, target_desc: str) -> bool:
+            if not hasattr(self, "_oracle") or self._oracle is None:
+                return False
+            question = (
+                f"I am looking for: {target_desc}\n"
+                f"I detected: {obj_desc}\n"
+                f"Is this the object I am looking for? Answer only yes or no."
+            )
+            answer = self._oracle.answer(question)
+            return answer.strip().lower().startswith("yes")
+
+        return judge
+
+    def set_oracle(self, oracle: Any) -> None:
+        """Connect VLMr1Oracle after policy construction; wires VLM judge into KG trigger."""
+        self._oracle = oracle
+        self.pipeline.set_vlm_judge(self._make_vlm_judge())
 
     def new_episode(self, target_category: str) -> None:
         self._target_category = str(target_category).split("|")[0].strip().lower()
