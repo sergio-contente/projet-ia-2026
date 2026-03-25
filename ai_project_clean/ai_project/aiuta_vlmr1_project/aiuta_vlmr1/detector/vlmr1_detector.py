@@ -2,6 +2,8 @@
 Refactored from benchmark_ovd.py::run_single_inference()."""
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -41,6 +43,7 @@ class VLMr1Detector(AbstractDetector):
                 **inputs,
                 max_new_tokens=self._config.model.max_new_tokens,
                 do_sample=False,
+                use_cache=False,
             )
         t_gen = time.perf_counter() - t_gen0
 
@@ -98,17 +101,33 @@ class VLMr1Detector(AbstractDetector):
         if kg_context:
             builder.set_kg_context(kg_context).set_scene_type("indoor")
         system, user_prompt = builder.build()
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": [
+        tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            pil_image.save(tmp_path, format="JPEG", quality=95)
+            img_url = f"file://{Path(tmp_path).resolve()}"
+
+            messages = [
+                {"role": "system", "content": system},
                 {
-                    "type": "image",
-                    "image": pil_image,
-                    "min_pixels": 256 * 28 * 28,
-                    "max_pixels": 512 * 28 * 28,
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "image": img_url,
+                            "min_pixels": 256 * 28 * 28,
+                            "max_pixels": 512 * 28 * 28,
+                        },
+                        {"type": "text", "text": user_prompt},
+                    ],
                 },
-                {"type": "text", "text": user_prompt},
-            ]},
-        ]
-        _, result = self._run_forward(messages)
-        return result
+            ]
+            _, result = self._run_forward(messages)
+            return result
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass

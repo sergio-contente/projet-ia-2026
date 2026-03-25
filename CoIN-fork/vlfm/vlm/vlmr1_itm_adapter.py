@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import os
+import tempfile
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -61,6 +64,11 @@ class VLMr1ITMAdapter:
 
             rgb = self._to_uint8_rgb(image)
             pil_image = Image.fromarray(rgb)
+            tmp_path: str | None = None
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            pil_image.save(tmp_path, format="JPEG", quality=95)
+            img_url = f"file://{os.path.abspath(tmp_path)}"
 
             question = f"Does this image show {txt}? Answer only yes or no."
             messages = [
@@ -73,7 +81,7 @@ class VLMr1ITMAdapter:
                     "content": [
                         {
                             "type": "image",
-                            "image": pil_image,
+                            "image": img_url,
                             "min_pixels": 256 * 28 * 28,
                             "max_pixels": 512 * 28 * 28,
                         },
@@ -103,6 +111,7 @@ class VLMr1ITMAdapter:
                     do_sample=False,
                     output_scores=True,
                     return_dict_in_generate=True,
+                    use_cache=False,
                 )
 
                 if not getattr(out, "scores", None):
@@ -118,4 +127,10 @@ class VLMr1ITMAdapter:
                 return float(max(0.0, min(1.0, prob_yes)))
         except Exception:
             return 0.5
+        finally:
+            if "tmp_path" in locals() and tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
 
