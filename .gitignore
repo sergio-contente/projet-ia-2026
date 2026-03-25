@@ -5,6 +5,10 @@ aiuta_vlmr1_project/results/logs/*.out
 aiuta_vlmr1/results/logs/*.err
 aiuta_vlmr1/results/logs/*.out
 
+# Same paths under ai_project_clean (repo layout)
+ai_project_clean/**/results/logs/*.err
+ai_project_clean/**/results/logs/*.out
+
 # Environment files
 .hf_env
 .env
