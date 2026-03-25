@@ -148,6 +148,7 @@ class ObjectPointCloudMap:
             step_res = self._vlmr1_bridge.pipeline_step(rgb_image, timestep=total_num_steps)
             signal = getattr(step_res, "signal", None)
             signal_value = getattr(signal, "value", str(signal)) if signal is not None else ""
+            print(f"[VLMr1Bridge] pipeline_step signal={signal_value!r} for {object_name}")
             if str(signal_value).lower() == "stop":
                 # Confirmed match: add to target clouds used for navigation.
                 if object_name in self.clouds:

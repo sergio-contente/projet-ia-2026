@@ -12,8 +12,8 @@ kg:
   max_instances_per_category: 20
   use_llm_fallback: false
 trigger:
-  tau_stop: 0.8
-  tau_skip: 0.2
-  max_interaction_rounds: 4
+  tau_stop: 0.01
+  tau_skip: 0.0
+  max_interaction_rounds: 1
 output_dir: ./results/vlmr1_kg
 seed: 42
