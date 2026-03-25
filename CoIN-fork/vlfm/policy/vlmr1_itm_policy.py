@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import cv2
+import numpy as np
 
 from vlfm.policy.itm_policy import ITMPolicyV2
 from vlfm.vlm.vlmr1_itm_adapter import VLMr1ITMAdapter
@@ -57,53 +57,55 @@ class VLMNavITMPolicy(ITMPolicyV2):
         # Isso garante que o agente explore em direção a objetos vistos mas não confirmados
         try:
             obj_map = getattr(self, "_object_map", None)
+            print(f"[DEBUG inject] obj_map={type(obj_map).__name__ if obj_map else None}")
             if obj_map is None:
                 return
-
             target = getattr(self, "_target_object", "").split("|")[0].strip().lower()
-            if not target:
-                return
-
             detection_cloud = getattr(obj_map, "detection_cloud", {})
+            print(f"[DEBUG inject] target={target!r}, dc_keys={list(detection_cloud.keys())}")
             if target not in detection_cloud:
                 return
-
             cloud = detection_cloud[target]
             if cloud is None or len(cloud) == 0:
                 return
-
-            # Pega a posição 2D média das detecções não confirmadas
-            positions_2d = cloud[:, :2]  # (N, 2) — x, y no frame episódico
-            centroid = positions_2d.mean(axis=0)  # (2,)
-
-            # Injeta um score alto no value map nessa posição
-            # Simulamos um depth frame artificial apontando para o centróide
-            robot_xy = self._observations_cache.get("robot_xy")
-            if robot_xy is None:
-                return
-
-            # Usa o value map diretamente para marcar a posição como valiosa
-            # Convertendo coordenadas do mundo para pixels do mapa
+            print(f"[DEBUG inject] cloud shape={cloud.shape}, injecting...")
+            positions_2d = cloud[:, :2]
+            centroid = positions_2d.mean(axis=0)
             map_size = self._value_map.size
             ppm = self._value_map.pixels_per_meter
-            origin = map_size // 2
+            # Usar a mesma fórmula de sort_waypoints para garantir consistência
+            # sort_waypoints faz:
+            #   px = int(-x * ppm) + origin[0]  → row no array (flipud)
+            #   py = int(-y * ppm) + origin[1]  → col no array
+            #   point_px = (value_map.shape[0] - px, py)
+            origin_arr = self._value_map._episode_pixel_origin  # array [row_origin, col_origin]
+            row_in_map = int(self._value_map._value_map.shape[0] - (int(-centroid[0] * ppm) + origin_arr[0]))
+            col_in_map = int(int(-centroid[1] * ppm) + origin_arr[1])
+            row_in_map = max(0, min(map_size - 1, row_in_map))
+            col_in_map = max(0, min(map_size - 1, col_in_map))
 
-            px = int(origin + centroid[0] * ppm)
-            py = int(origin - centroid[1] * ppm)  # y invertido no mapa
-
-            px = max(0, min(map_size - 1, px))
-            py = max(0, min(map_size - 1, py))
-
-            # Marca uma região ao redor do centróide com score alto
-            radius_px = max(5, int(1.0 * ppm))  # 1 metro de raio
-            cv2.circle(
-                self._value_map._value_map[:, :, 0],
-                (px, py),
-                radius_px,
-                0.85,  # score alto mas não máximo
-                -1,   # filled
-            )
-
+            # Injeção com gradiente gaussiano — score decresce com distância ao centróide
+            # Isso preserva informação direcional: frontier mais próximo da cama tem score maior
+            # Criar grade de coordenadas do mapa
+            ys, xs = np.ogrid[0:map_size, 0:map_size]
+            # Distância de cada pixel ao centróide em pixels
+            dist_px = np.sqrt((xs - col_in_map) ** 2 + (ys - row_in_map) ** 2)
+            # Sigma = raio de injeção em pixels (controla suavidade do gradiente)
+            sigma_px = max(30, int(2.0 * ppm))  # 2 metros de sigma
+            # Score gaussiano: 0.85 no centro, decai para 0 nas bordas
+            gaussian = 0.85 * np.exp(-(dist_px**2) / (2 * sigma_px**2))
+            # Aplicar apenas onde o novo score é maior que o existente (não sobrescrever stop confirmados)
+            current = self._value_map._value_map[:, :, 0]
+            self._value_map._value_map[:, :, 0] = np.maximum(current, gaussian.astype(np.float32))
+            print(f"[DEBUG inject] gaussian sigma={sigma_px}px, max_injected={gaussian.max():.3f}")
         except Exception as e:
             print(f"[VLMr1ITMPolicy] detection_cloud injection error: {e}")
+            import traceback; traceback.print_exc()
+
+    def _sort_frontiers_by_value(self, observations, frontiers):
+        print(f"[DEBUG frontiers] n={len(frontiers)}, frontiers={frontiers[:3]}")
+        print(f"[DEBUG frontiers] detection centroid injetado anteriormente")
+        result = super()._sort_frontiers_by_value(observations, frontiers)
+        print(f"[DEBUG frontiers] best_value={result[1][0] if result[1] else 'N/A'}")
+        return result
 

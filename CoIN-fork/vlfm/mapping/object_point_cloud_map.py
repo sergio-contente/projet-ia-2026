@@ -54,6 +54,7 @@ class ObjectPointCloudMap:
         self.last_target_coord = None
         self.detection_cloud = {}
         self.object_unique_id = 1
+        self._rejection_count = {}
         if self.vlm_agent_brain is not None:
             self.vlm_agent_brain.reset()
         if self.llm_agent_brain is not None:
@@ -155,6 +156,26 @@ class ObjectPointCloudMap:
                 else:
                     self.clouds[object_name] = global_cloud
                 return True
+
+            # Contabilizar rejeição
+            if not hasattr(self, "_rejection_count"):
+                self._rejection_count = {}
+            self._rejection_count[object_name] = self._rejection_count.get(object_name, 0) + 1
+
+            # Após 3 rejeições do mesmo objeto, navegar até ele para re-avaliar de perto
+            # (mesmo comportamento do CoIN original com get_to_the_best_one)
+            if self._rejection_count[object_name] >= 3:
+                print(
+                    f"[VLMr1] {object_name} rejeitado "
+                    f"{self._rejection_count[object_name]}x — navegando para re-avaliar de perto"
+                )
+                if object_name not in self.clouds:
+                    self.clouds[object_name] = global_cloud
+                else:
+                    self.clouds[object_name] = np.concatenate(
+                        (self.clouds[object_name], global_cloud), axis=0
+                    )
+                self._rejection_count[object_name] = 0
             return False
 
         # For second-class, bad detections that are too offset or out of range, we
