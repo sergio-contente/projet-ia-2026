@@ -69,6 +69,11 @@ class VLMr1Bridge:
         def judge(obj_desc: str, target_desc: str) -> bool:
             if not hasattr(self, "_oracle") or self._oracle is None:
                 return False
+            # Conta como interação com o usuário (oracle simula o usuário humano)
+            try:
+                self.pipeline._num_questions_asked += 1
+            except Exception:
+                pass
             question = (
                 f"I am looking for: {target_desc}\n"
                 f"I detected: {obj_desc}\n"

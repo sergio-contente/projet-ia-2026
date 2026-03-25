@@ -309,6 +309,30 @@ class VLFMTrainer(PPOTrainer):
                         infos_to_save["object_category"] = self._agent._actor_critic._target_object.split("|")[0]
                     except:
                         infos_to_save["object_category"] = "None"
+                    # Número de perguntas feitas ao usuário neste episódio (métrica CoIN NQ)
+                    try:
+                        nq = self._agent._actor_critic.how_many_question_to_the_user(
+                            current_episodes_info[i].episode_id
+                        )
+                        infos_to_save["num_questions_to_user"] = int(nq)
+                        episode_stats["num_questions_to_user"] = float(nq)
+                    except Exception:
+                        infos_to_save["num_questions_to_user"] = 0
+                        episode_stats["num_questions_to_user"] = 0.0
+                    # Print de monitoramento em tempo real por episódio
+                    _n_done = len(stats_episodes)
+                    _sr_so_far = np.mean([v.get("success", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0
+                    _spl_so_far = np.mean([v.get("spl", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0
+                    _nq_so_far = np.mean([v.get("num_questions_to_user", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0
+                    print(
+                        Fore.CYAN + f"[EP {current_episodes_info[i].episode_id}] "
+                        f"obj={infos_to_save.get('object_category', '?')} | "
+                        f"success={infos_to_save.get('success', '?')} | "
+                        f"spl={float(infos_to_save.get('spl', 0.0)):.3f} | "
+                        f"nq={infos_to_save.get('num_questions_to_user', 0)} | "
+                        f"dtg={float(infos_to_save.get('distance_to_goal', 0.0)):.2f}m | "
+                        f"--- running avg ({_n_done} eps): SR={_sr_so_far:.3f} SPL={_spl_so_far:.3f} NQ={_nq_so_far:.1f}"
+                    )
                     with open(os.path.join(ep_id_path, "info.json"), "w") as f:
                         json.dump(infos_to_save, f)
 
