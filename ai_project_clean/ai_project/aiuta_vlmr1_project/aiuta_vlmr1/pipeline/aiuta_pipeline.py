@@ -61,6 +61,7 @@ class AIUTAPipeline:
         self._target_category = ""
         self._timestep = 0
         self._num_questions_asked = 0
+        self._num_visual_comparisons = 0
         self._episode_log: list[dict] = []
         self._last_step_result: PipelineStepResult | None = None
 
@@ -126,6 +127,7 @@ class AIUTAPipeline:
         self._target_category = target_category
         self._timestep = 0
         self._num_questions_asked = 0
+        self._num_visual_comparisons = 0
         self._episode_log = []
         self._last_step_result = None
 
@@ -221,6 +223,7 @@ class AIUTAPipeline:
             "target_category": self._target_category,
             "timestep": self._timestep,
             "num_questions_asked": self._num_questions_asked,
+            "num_visual_comparisons": getattr(self, "_num_visual_comparisons", 0),
             "num_kg_objects": self._kg.num_objects,
             "target_facts": {
                 "category": tf.category,

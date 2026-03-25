@@ -62,6 +62,7 @@ class VLMr1Bridge:
         self.pipeline = AIUTAPipeline(self.config, ask_human=ask_human)
         self._target_category: str = ""
         self._oracle = None
+        self._last_visual_entropy = 1.0
 
     def _make_vlm_judge(self) -> Callable[[str, str], bool]:
         """Returns (obj_desc, target_desc) -> bool usando comparação visual VLM-R1."""
@@ -69,21 +70,32 @@ class VLMr1Bridge:
         def judge(obj_desc: str, target_desc: str, detected_crop=None) -> bool:
             if not hasattr(self, "_oracle") or self._oracle is None:
                 return False
+
+            # Conta comparações visuais separadamente do NQ
+            try:
+                self.pipeline._num_visual_comparisons = getattr(
+                    self.pipeline, "_num_visual_comparisons", 0
+                ) + 1
+            except Exception:
+                pass
+
+            if detected_crop is not None:
+                try:
+                    is_match, entropy = self._oracle.answer_with_detection_image(detected_crop)
+                    print(f"[VLMr1Bridge] Visual judge → {'yes' if is_match else 'no'} (entropy={entropy:.3f})")
+                    try:
+                        self._last_visual_entropy = entropy
+                    except Exception:
+                        pass
+                    return is_match
+                except Exception as e:
+                    print(f"[VLMr1Bridge] Visual judge fallback to text: {e}")
+
+            # Fallback textual — conta como pergunta ao usuário
             try:
                 self.pipeline._num_questions_asked += 1
             except Exception:
                 pass
-
-            # Comparação visual se tiver o crop do objeto detectado
-            if detected_crop is not None:
-                try:
-                    result = self._oracle.answer_with_detection_image(detected_crop)
-                    print(f"[VLMr1Bridge] Visual judge → {'yes' if result else 'no'}")
-                    return result
-                except Exception as e:
-                    print(f"[VLMr1Bridge] Visual judge fallback to text: {e}")
-
-            # Fallback textual
             question = (
                 f"I am looking for: {target_desc}\n"
                 f"I detected: {obj_desc}\n"

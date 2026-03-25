@@ -46,8 +46,8 @@ class ObjectPointCloudMap:
         self.vlm_oracle: VLMOracle | None = vlm_oracle
         self._use_vlmr1 = bool(use_vlmr1)
         self._vlmr1_bridge = vlmr1_bridge
-
-
+        if self._use_vlmr1:
+            self._rejected_cloud: dict = {}  # {object_name: [(cloud, entropy), ...]}
 
     def reset(self, ep_id, target_obj) -> None:
         self.clouds = {}
@@ -55,6 +55,8 @@ class ObjectPointCloudMap:
         self.detection_cloud = {}
         self.object_unique_id = 1
         self._rejection_count = {}
+        if self._use_vlmr1:
+            self._rejected_cloud = {}
         if self.vlm_agent_brain is not None:
             self.vlm_agent_brain.reset()
         if self.llm_agent_brain is not None:
@@ -64,6 +66,27 @@ class ObjectPointCloudMap:
 
     def has_object(self, target_class: str) -> bool:
         return target_class in self.clouds and len(self.clouds[target_class]) > 0
+
+    def is_detection_evaluated(self, new_detection: np.ndarray, target_class: str) -> bool:
+        """
+        VLM-R1 only: retorna True se esta posição já foi avaliada pelo visual judge
+        (confirmada OU rejeitada), para evitar re-avaliações desnecessárias.
+        """
+        if target_class in self._rejected_cloud:
+            for cloud, _ in self._rejected_cloud[target_class]:
+                distances = np.linalg.norm(
+                    cloud[:, :3] - new_detection[:, :3].mean(axis=0), axis=1
+                )
+                if np.any(distances < 1.5):
+                    return True
+        if target_class in self.clouds:
+            cloud = self.clouds[target_class]
+            distances = np.linalg.norm(
+                cloud[:, :3] - new_detection[:, :3].mean(axis=0), axis=1
+            )
+            if np.any(distances < 1.5):
+                return True
+        return False
 
     def mask_target_image(self, target_image: np.ndarray, target_object_mask: np.ndarray) -> np.ndarray:
 
@@ -119,21 +142,13 @@ class ObjectPointCloudMap:
             return
 
         if self._use_vlmr1:
-            # CoIN + VLM-R1 path: keep point-cloud extraction + seen-detection logic,
-            # but delegate STOP/CONTINUE decision to AIUTA pipeline via bridge.
             within_range = (local_cloud[:, 0] <= max_depth * 0.95) * 1.0
             within_range = within_range.astype(np.float32)
             within_range[within_range == 0] = np.random.rand()
             global_cloud = transform_points(tf_camera_to_episodic, local_cloud)
             global_cloud = np.concatenate((global_cloud, within_range[:, None]), axis=1)
 
-            # Skip expensive pipeline call if we've already seen this detection.
-            if self.is_detection_seen(global_cloud, object_name):
-                if object_name in self.clouds:
-                    self.clouds[object_name] = global_cloud
-                return False
-
-            # Always keep detections to enable fallback navigation.
+            # Sempre acumular no detection_cloud para value map injection
             if object_name in self.detection_cloud:
                 self.detection_cloud[object_name] = np.concatenate(
                     (self.detection_cloud[object_name], global_cloud), axis=0
@@ -141,41 +156,63 @@ class ObjectPointCloudMap:
             else:
                 self.detection_cloud[object_name] = global_cloud
 
-            # Run AIUTA pipeline decision.
+            # Verificar se esta posição já foi avaliada pelo visual judge
+            # (usa rejected_cloud + clouds, não detection_cloud)
+            if self.is_detection_evaluated(global_cloud, object_name):
+                # Posição já avaliada — atualizar posição no clouds se confirmada
+                if object_name in self.clouds:
+                    self.clouds[object_name] = global_cloud
+                return False
+
             if self._vlmr1_bridge is None:
-                # No bridge: behave conservatively (do not confirm as target).
                 return False
 
             step_res = self._vlmr1_bridge.pipeline_step(rgb_image, timestep=total_num_steps)
             signal = getattr(step_res, "signal", None)
             signal_value = getattr(signal, "value", str(signal)) if signal is not None else ""
             print(f"[VLMr1Bridge] pipeline_step signal={signal_value!r} for {object_name}")
+
             if str(signal_value).lower() == "stop":
+                # Confirmado: adicionar ao clouds para navegação
                 if object_name in self.clouds:
                     self.clouds[object_name] = np.concatenate((self.clouds[object_name], global_cloud), axis=0)
                 else:
                     self.clouds[object_name] = global_cloud
+                # Limpar rejected_cloud desta posição se confirmada
+                self._rejected_cloud.pop(object_name, None)
+                self._rejection_count[object_name] = 0
                 return True
+
+            # Capturar entropia da última comparação visual
+            entropy = getattr(getattr(self, "_vlmr1_bridge", None), "_last_visual_entropy", 1.0)
+
+            # Guardar (cloud, entropy) no rejected_cloud
+            if not hasattr(self, "_rejected_cloud"):
+                self._rejected_cloud = {}
+            if object_name not in self._rejected_cloud:
+                self._rejected_cloud[object_name] = []
+            self._rejected_cloud[object_name].append((global_cloud, float(entropy)))
 
             # Contabilizar rejeição
             if not hasattr(self, "_rejection_count"):
                 self._rejection_count = {}
             self._rejection_count[object_name] = self._rejection_count.get(object_name, 0) + 1
 
-            # Após 3 rejeições do mesmo objeto, navegar até ele para re-avaliar de perto
-            # (mesmo comportamento do CoIN original com get_to_the_best_one)
             if self._rejection_count[object_name] >= 3:
                 print(
-                    f"[VLMr1] {object_name} rejeitado "
-                    f"{self._rejection_count[object_name]}x — navegando para re-avaliar de perto"
+                    Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
+                    f"{self._rejection_count[object_name]}x — navegando para posição mais incerta"
                 )
-                if object_name not in self.clouds:
-                    self.clouds[object_name] = global_cloud
-                else:
-                    self.clouds[object_name] = np.concatenate(
-                        (self.clouds[object_name], global_cloud), axis=0
-                    )
+                # Navegar para a posição com maior entropia (modelo mais incerto = mais provável de ser o alvo)
+                best_cloud, best_entropy = max(
+                    self._rejected_cloud[object_name],
+                    key=lambda x: x[1],
+                )
+                print(f"[VLMr1] Melhor entropia: {best_entropy:.3f}")
+                self.clouds[object_name] = best_cloud  # substituir, não acumular
                 self._rejection_count[object_name] = 0
+                self._rejected_cloud.pop(object_name, None)
+
             return False
 
         # For second-class, bad detections that are too offset or out of range, we

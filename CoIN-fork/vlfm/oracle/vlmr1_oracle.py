@@ -113,23 +113,23 @@ class VLMr1Oracle:
     def answer_with_detection_image(
         self,
         detected_crop: np.ndarray,
-    ) -> bool:
+    ) -> tuple[bool, float]:
         """
-        Compara visualmente a instance_imagegoal com o crop do objeto detectado.
-        Retorna True se o VLM-R1 decide que são o mesmo objeto.
+        Compara visualmente a instance_imagegoal com o crop detectado.
+        Retorna (is_match, entropy) onde entropy é a incerteza do modelo [0,1].
+        Alta entropia = modelo incerto = possivelmente o objeto correto.
         """
         if self._instance_image is None or detected_crop is None:
-            return False
+            return False, 1.0
         try:
             if self._loader is None:
                 if ModelLoader._instances:
                     key = next(iter(ModelLoader._instances))
                     self._loader = ModelLoader._instances[key]
                 else:
-                    return False
+                    return False, 1.0
 
             import tempfile
-            import torch
 
             from qwen_vl_utils import process_vision_info
 
@@ -203,13 +203,24 @@ class VLMr1Oracle:
                         max_new_tokens=16,
                         do_sample=False,
                         use_cache=False,
+                        output_scores=True,
+                        return_dict_in_generate=True,
                     )
 
-                trimmed = [o[len(i):] for i, o in zip(inputs.input_ids, gen)]
+                trimmed = [o[len(i) :] for i, o in zip(inputs.input_ids, gen.sequences)]
                 raw = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
                 raw_l = raw.strip().lower()
                 print(f"[VLMr1Oracle] Visual comparison → A: {raw_l!r}")
-                return raw_l.startswith("yes")
+
+                entropy = 1.0
+                if getattr(gen, "scores", None) and len(gen.scores) > 0:
+                    from aiuta_vlmr1.evaluation.vlm_inference_utils import compute_logits_entropy
+
+                    logits = gen.scores[0][0]
+                    entropy = compute_logits_entropy(logits)
+
+                is_match = raw_l.startswith("yes")
+                return is_match, entropy
 
             finally:
                 for p in [path_target, path_detected]:
@@ -219,7 +230,7 @@ class VLMr1Oracle:
                         pass
         except Exception as e:
             print(f"[VLMr1Oracle] answer_with_detection_image error: {e}")
-            return False
+            return False, 1.0
 
     def reset(self) -> None:
         self._instance_image = None

@@ -68,7 +68,9 @@ class VLMNavITMPolicy(ITMPolicyV2):
             cloud = detection_cloud[target]
             if cloud is None or len(cloud) == 0:
                 return
-            positions_2d = cloud[:, :2]
+            # Injetar gaussian sobre o centróide das últimas detecções (últimas 5000 posições)
+            recent_cloud = cloud[-5000:] if len(cloud) > 5000 else cloud
+            positions_2d = recent_cloud[:, :2]
             centroid = positions_2d.mean(axis=0)
             map_size = self._value_map.size
             ppm = self._value_map.pixels_per_meter

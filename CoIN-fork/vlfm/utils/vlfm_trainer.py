@@ -314,11 +314,17 @@ class VLFMTrainer(PPOTrainer):
                         nq = self._agent._actor_critic.how_many_question_to_the_user(
                             current_episodes_info[i].episode_id
                         )
+                        bridge = getattr(self._agent._actor_critic, "_vlmr1_bridge", None)
+                        nvc = int(getattr(getattr(bridge, "pipeline", None), "_num_visual_comparisons", 0))
                         infos_to_save["num_questions_to_user"] = int(nq)
+                        infos_to_save["num_visual_comparisons"] = nvc
                         episode_stats["num_questions_to_user"] = float(nq)
+                        episode_stats["num_visual_comparisons"] = float(nvc)
                     except Exception:
                         infos_to_save["num_questions_to_user"] = 0
+                        infos_to_save["num_visual_comparisons"] = 0
                         episode_stats["num_questions_to_user"] = 0.0
+                        episode_stats["num_visual_comparisons"] = 0.0
                     # Print de monitoramento em tempo real por episódio
                     _n_done = len(stats_episodes)
                     _sr_so_far = np.mean([v.get("success", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0
