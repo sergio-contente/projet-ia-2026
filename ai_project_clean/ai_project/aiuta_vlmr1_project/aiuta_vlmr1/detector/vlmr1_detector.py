@@ -17,8 +17,9 @@ from .prompt_templates import PromptBuilder
 from ..utils.model_loader import ModelLoader
 
 
-MAX_AREA_RATIO = 0.50
-MIN_AREA_PX = 32 * 32
+MAX_AREA_RATIO = 0.30
+MIN_AREA_PX = 40 * 40
+MAX_ASPECT_RATIO = 4.0
 
 
 class VLMr1Detector(AbstractDetector):
@@ -30,14 +31,16 @@ class VLMr1Detector(AbstractDetector):
     def _filter_detections(
         dets: list[Detection], width: int, height: int
     ) -> list[Detection]:
-        """Reject oversized (scene-level) and tiny (noise) bboxes."""
+        """Reject oversized, tiny, elongated, and origin-anchored bboxes."""
         frame_area = width * height
         if frame_area <= 0:
             return dets
         filtered: list[Detection] = []
         for d in dets:
             x1, y1, x2, y2 = d.bbox
-            det_area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            det_w = max(0.0, x2 - x1)
+            det_h = max(0.0, y2 - y1)
+            det_area = det_w * det_h
             ratio = det_area / frame_area
             if ratio > MAX_AREA_RATIO:
                 print(
@@ -48,17 +51,26 @@ class VLMr1Detector(AbstractDetector):
             if det_area < MIN_AREA_PX:
                 print(
                     f"[DETECT_FILTER] REJECTED {d.label} bbox={d.bbox} "
-                    f"too small ({det_area:.0f}px)"
+                    f"too small ({det_area:.0f}px < {MIN_AREA_PX})"
+                )
+                continue
+            if det_w > 0 and det_h > 0:
+                aspect = max(det_w / det_h, det_h / det_w)
+                if aspect > MAX_ASPECT_RATIO:
+                    print(
+                        f"[DETECT_FILTER] REJECTED {d.label} bbox={d.bbox} "
+                        f"aspect={aspect:.1f} > {MAX_ASPECT_RATIO}"
+                    )
+                    continue
+            if x1 == 0 and y1 == 0 and ratio > 0.20:
+                print(
+                    f"[DETECT_FILTER] REJECTED {d.label} bbox={d.bbox} "
+                    f"origin-anchored + large ({ratio:.1%})"
                 )
                 continue
             filtered.append(d)
         if not filtered and dets:
-            dets_sorted = sorted(
-                dets,
-                key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),
-            )
-            filtered = [dets_sorted[0]]
-            print(f"[DETECT_FILTER] All filtered — keeping smallest: {filtered[0].bbox}")
+            print(f"[DETECT_FILTER] All {len(dets)} detections filtered out")
         return filtered
 
     @staticmethod

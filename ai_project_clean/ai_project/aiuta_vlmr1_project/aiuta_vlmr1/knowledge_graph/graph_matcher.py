@@ -124,7 +124,7 @@ def _negative_pair_result(obj_val: str, neg_val: str, loader: Any | None) -> str
     return "match" if _short_match(o, n) else "mismatch"
 
 
-MIN_RESOLVED_FOR_STOP = 2
+MIN_RESOLVED_FOR_STOP = 1
 
 
 class GraphMatcher:

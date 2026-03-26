@@ -334,6 +334,8 @@ class AIUTAPipeline:
                         print("[AIUTAPipeline] IDK response — not counting toward budget")
                     log_entry["user_response"] = response
 
+                    oracle_no = response.strip().lower().startswith("no")
+
                     attr_name = SceneKnowledgeGraph._infer_attribute_from_question(
                         action.question or ""
                     )
@@ -366,6 +368,18 @@ class AIUTAPipeline:
                                     f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={attr.value} "
                                     f"(from detection VQA)"
                                 )
+
+                        if oracle_no and det_answer and det_answer.strip().lower().startswith("yes"):
+                            print(
+                                f"[AIUTAPipeline] Oracle='no' vs Detection='yes' "
+                                f"for: {action.question!r} — definitive mismatch"
+                            )
+                            log_entry["target_facts_snapshot"] = {
+                                "known": dict(self._kg.target_facts.known_attributes),
+                                "negative": dict(self._kg.target_facts.negative_attributes),
+                            }
+                            self._episode_log.append(log_entry)
+                            break
                     else:
                         log_entry["detection_answer"] = "(think feature — obj already has attribute)"
 

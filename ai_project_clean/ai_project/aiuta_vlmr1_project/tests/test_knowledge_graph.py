@@ -49,12 +49,12 @@ class TestGraphMatcher:
     def test_no_facts(self):
         assert GraphMatcher.compute_alignment(self._node({"color": "brown"}), TargetFacts()) == -1.0
 
-    def test_single_resolved_forces_ask(self):
+    def test_single_resolved_match(self):
         t = TargetFacts()
         t.add_positive("color", "white")
         t.add_positive("material", "wood")
         node = self._node({"color": "white"})
-        assert GraphMatcher.compute_alignment(node, t) == -1.0
+        assert GraphMatcher.compute_alignment(node, t) == 1.0
 
     def test_perfect_match(self):
         attrs = {"color": "white", "material": "wood", "size": "small", "location": "bedroom", "near": "window"}

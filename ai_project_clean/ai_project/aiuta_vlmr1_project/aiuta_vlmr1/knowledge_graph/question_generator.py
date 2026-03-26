@@ -13,7 +13,20 @@ YESNO_TEMPLATES = {
     "color": "Is the {category} {value} in color?",
     "material": "Is the {category} made of {value}?",
     "size": "Is the {category} {value}?",
+    "texture": "Does the {category} have a {value} texture?",
+    "pattern": "Does the {category} have a {value} pattern?",
+    "shape": "Is the {category} {value} in shape?",
+    "fabric": "Is the {category} made of {value} fabric?",
+    "surface": "Does the {category} have a {value} surface?",
+    "has_glass_door": "Does the {category} have a glass door?",
+    "has_handle": "Does the {category} have a handle?",
+    "has_drawer": "Does the {category} have drawers?",
+    "is_open": "Is the {category} open?",
+    "location": "Is the {category} in the {value}?",
+    "near": "Is the {category} near a {value}?",
 }
+
+YESNO_CATCHALL = "Does the {category} have {value}?"
 
 QUESTION_TEMPLATES = {
     "color": "What color is the {category}?",
@@ -42,13 +55,15 @@ class QuestionGenerator:
 
         # Priority 0: Confirm attributes the detected object already has (yes/no)
         for attr_name, attr_obj in obj.attributes.items():
-            if attr_name in known or attr_name.startswith("think_"):
+            if attr_name in known:
                 continue
-            template = YESNO_TEMPLATES.get(attr_name)
-            if template:
-                candidate = template.format(category=obj.category, value=attr_obj.value)
-                if candidate not in asked:
-                    return candidate
+            real_name = attr_name
+            if real_name.startswith("think_"):
+                real_name = real_name[len("think_"):]
+            template = YESNO_TEMPLATES.get(real_name, YESNO_CATCHALL)
+            candidate = template.format(category=obj.category, value=attr_obj.value)
+            if candidate not in asked:
+                return candidate
 
         # Priority 1: Think features from description pass (highly discriminative)
         think_features: list[str] = getattr(obj, "_think_features", None) or []
