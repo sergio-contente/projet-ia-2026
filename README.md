@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/Python-3.9%2F3.10-blue?style=for-the-badge&logo=python&logoColor=white"/>
+<img src="https://img.shields.io/badge/Python-3.9-blue?style=for-the-badge&logo=python&logoColor=white"/>
 <img src="https://img.shields.io/badge/PyTorch-2.0+-ee4c2c?style=for-the-badge&logo=pytorch&logoColor=white"/>
 <img src="https://img.shields.io/badge/VLM--R1-Qwen2.5VL--3B-green?style=for-the-badge"/>
 <img src="https://img.shields.io/badge/Zero--API--Cost-local%20only-blueviolet?style=for-the-badge"/>
@@ -21,7 +21,7 @@ We replace the multi-model stack of [AIUTA](https://intelligolabs.github.io/CoIN
 
 The project has two phases:
 
-1. **Phase 1 — IDKVQA Offline Evaluation**: Calibrating uncertainty-aware Yes/No/IDK visual question answering on 502 static samples. Achieved φ₁ = 33.27 (+58% over AIUTA's 21.12) with a single VLM call via entropy-based abstention.
+1. **Phase 1 — IDKVQA Offline Evaluation**: Calibrating uncertainty-aware Yes/No/IDK visual question answering on 502 static samples. In a comparable setup (raw mode, no threshold tuning), VLM-R1 3B achieves φ₁ = 21.71 vs. AIUTA's 21.12 with LLaVA 7B — comparable reliability with a 2.3× smaller model.
 
 2. **Phase 2 — CoIN-Bench Online Navigation**: Integrating the full reasoning pipeline into VLFM-based embodied navigation on [CoIN-Bench](https://huggingface.co/datasets/ftaioli/CoIN-Bench) (1,649 episodes across 3 splits).
 
@@ -39,7 +39,9 @@ The project has two phases:
 | **Alignment scoring** | LLM prompt → score 0–10 (1 LLM call) | GraphMatcher: deterministic KG comparison (0 calls) |
 | **Question generation** | LLM composes natural-language question (1 LLM call) | QuestionGenerator selects most discriminative attribute + template (0 calls) |
 | **Contradiction detection** | Not explicit — LLM may overlook conflicts in concatenated text | Explicit: Oracle says "no" + Detection VQA says "yes" → immediate rejection |
-| **IDKVQA φ₁** | 21.12 (Normalized Entropy) | 33.27 (threshold mode, +58%) |
+| **IDKVQA φ₁** | 21.12 (LLaVA 7B, Normalized Entropy, τ=0.75) | 21.71 (VLM-R1 3B, raw mode, no threshold tuning)¹ |
+
+¹ Fair comparison uses `raw` mode (no threshold). Our `threshold` mode reaches φ₁=33.27 with τ=0.10, but this τ was optimized on the same 502-sample eval set and uses a different model, so the comparison conflates model and threshold effects.
 
 **What is NOT changed**: VLFM navigation policy, BLIP-2 frontier scoring (value map), MobileSAM segmentation, PointNav movement. These remain from the original CoIN codebase.
 
@@ -125,20 +127,23 @@ Evaluated on [IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) (502 sampl
 
 | Mode | VLM Calls | φ₁ (↑) | Accuracy (↑) | Overclaim (↓) | Coverage |
 |------|-----------|--------|--------------|----------------|----------|
-| `raw` | 1 | 21.71 | 53.6% | 54.1% | 72.1% |
-| **`threshold`** (τ=0.10) | **1** | **33.27** | **48.2%** | **28.1%** | **55.4%** |
+| **`raw`** | **1** | **21.71** | **53.6%** | **54.1%** | **72.1%** |
+| `threshold` (τ=0.10)† | 1 | 33.27 | 48.2% | 28.1% | 55.4% |
 | `kg` | 2 | 28.69 | 32.1% | 8.9% | 8.4% |
 | `two_pass_kg` | 3 | 24.10 | 40.6% | 28.8% | 51.4% |
 | `relaxed` | 3 | 19.12 | 51.0% | 52.7% | 71.3% |
 | `entropy` | 3 | 23.90 | 48.6% | 38.4% | 62.0% |
 
-**AIUTA original baseline**: φ₁ = 21.12 (LLaVA 7B, Normalized Entropy)
+† τ=0.10 was optimized on the same 502-sample eval set. Bold row (`raw`) is the fair comparison to AIUTA's φ₁=21.12.
+
+**AIUTA original baseline**: φ₁ = 21.12 (LLaVA 7B, Normalized Entropy, τ=0.75)
 
 **Key findings**:
-- **Best φ₁**: `threshold` mode — 33.27 (+58% over AIUTA) with only 1 VLM call
+- **Fair comparison** (`raw` mode, no threshold tuning): VLM-R1 achieves φ₁ = 21.71 vs. AIUTA's 21.12 — comparable reliability with a 2.3× smaller model (3B vs 7B) and no API cost
+- **With threshold tuning** (`threshold` mode, τ=0.10): φ₁ = 33.27, but this τ was swept on the same 502-sample eval set, so the gain conflates model calibration with threshold overfitting. A proper comparison would require a held-out τ selection set or using AIUTA's τ=0.75 on VLM-R1
 - **Best accuracy**: `raw` mode — 53.6% (no abstention filtering)
 - **KG mode over-abstains** on single static images (91.6% IDK rate) because without navigation context, the KG has no positive evidence to confirm. This is by design — the KG's value emerges in multi-step online navigation where it accumulates facts over time
-- **Entropy threshold τ=0.10** is optimal (found via sweep over 502 samples)
+- **Entropy threshold τ=0.10** is optimal on this eval set (found via sweep over 502 samples)
 
 ### Ablation Modes Explained
 
@@ -157,22 +162,23 @@ Evaluated on [IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) (502 sampl
 
 ### Integration Architecture
 
-The system runs in **two conda environments** communicating via the AIUTA-VLM-R1 bridge:
+Everything runs in a **single conda environment** (`coin-hab`, Python 3.9) with the AIUTA package installed via `pip install -e`:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  coin-hab env (Python 3.9)                                  │
+┌──────────────────────────────────────────────────────────────┐
+│  Single env (Python 3.9 + Habitat + AIUTA-VLM-R1)           │
+│                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
 │  │ Habitat  │→ │  VLFM    │→ │ BLIP-2   │→ │  PointNav  │  │
 │  │ Sim      │  │ Policy   │  │ ValueMap │  │  Movement  │  │
 │  └──────────┘  └────┬─────┘  └──────────┘  └────────────┘  │
 │                     │                                        │
-│              ┌──────┴──────┐                                │
+│              ┌──────┴──────┐                                 │
 │              │ VLMr1Bridge │ ← thin interface                │
-│              └──────┬──────┘                                │
+│              └──────┬──────┘                                 │
 │                     │                                        │
 │  ┌──────────────────┴──────────────────────────────────┐    │
-│  │  aiuta env (Python 3.10) — loaded via pip install   │    │
+│  │  AIUTA-VLM-R1 (pip install -e aiuta_vlmr1_project)  │    │
 │  │  ┌──────────┐ ┌──────────────┐ ┌────────────────┐  │    │
 │  │  │ VLM-R1   │ │SelfQuestioner│ │ KG + Matcher   │  │    │
 │  │  │ Detector │ │+ TripleExtr. │ │ + QuestionGen  │  │    │
@@ -182,7 +188,7 @@ The system runs in **two conda environments** communicating via the AIUTA-VLM-R1
 │  │  │Oracle    │   instance image (simulated user)     │    │
 │  │  └──────────┘                                       │    │
 │  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Components
@@ -275,70 +281,200 @@ projet-ia-2026/
 │   │   ├── vlfm/
 │   │   │   ├── oracle/vlmr1_oracle.py       # VLM-R1-based simulated user
 │   │   │   ├── policy/base_objectnav_policy.py  # Modified to use VLMr1Bridge
-│   │   │   └── mapping/object_point_cloud_map.py # Modified for VLM-R1 detections
-│   │   └── run_coin_vlmr1.sbatch            # SLURM launcher for online eval
+│   │   │   ├── mapping/object_point_cloud_map.py # Modified for VLM-R1 detections
+│   │   │   └── utils/vlfm_trainer.py        # Episode stats + NQ counting
+│   │   ├── config/                          # Habitat/VLFM config files
+│   │   ├── idkvqa/                          # IDKVQA evaluator from original CoIN
+│   │   ├── scripts/                         # SLURM launchers (run_full_eval_*.sh)
+│   │   ├── notebook/                        # Analysis notebooks
+│   │   ├── test/                            # CoIN-side tests
+│   │   ├── run_batch.sh                     # Original CoIN batch runner
+│   │   ├── our_requirements.txt             # CoIN-specific dependencies
+│   │   ├── setup.py                         # CoIN package setup
+│   │   └── pyproject.toml                   # CoIN package config
+│   ├── scripts/                             # Top-level SLURM scripts
+│   │   ├── run_full_eval_seen.sbatch        # Full val_seen evaluation
+│   │   └── run_full_eval_unseen.sbatch      # Full val_unseen evaluation
+│   ├── run_coin_vlmr1.sbatch               # Main CoIN eval launcher
+│   ├── lavis_stub.py                        # Stub for BLIP-2/lavis heavy deps
+│   ├── GroundingDINO/                       # GroundingDINO (used by VLFM, not replaced)
 │   └── CoIN-Bench/                          # Dataset (from HuggingFace)
 └── .gitignore
 ```
 
 ---
 
-## Usage
+## Setup & Installation
 
-### Installation
+### Prerequisites
+
+- Linux (tested on Ubuntu)
+- CUDA-capable GPU (tested on L40s, A100)
+- [Miniconda](https://docs.conda.io/en/latest/miniconda.html)
+- Access to HM3D scene dataset (for online navigation)
+
+### Step 1: Create Conda Environment
+
+```bash
+conda create -n coin python=3.9 cmake=3.14 -y
+conda activate coin
+```
+
+### Step 2: Install Habitat-Sim with Bullet Physics
+
+```bash
+conda install habitat-sim=0.2.4 withbullet headless -c conda-forge -c aihabitat -y
+```
+
+### Step 3: Install Habitat-Lab and Habitat-Baselines
+
+```bash
+pip install habitat-lab==0.2.420230405
+pip install habitat-baselines==0.2.420230405
+```
+
+### Step 4: Install PyTorch (CUDA 12.1)
+
+```bash
+pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
+```
+
+### Step 5: Install Transformers (Qwen2.5-VL compatible + Python 3.9)
+
+Qwen2.5-VL requires `transformers>=4.45`. On Python 3.9, pin to a version that avoids 3.10+ syntax:
+
+```bash
+pip install transformers==4.45.2 accelerate qwen-vl-utils
+```
+
+### Step 6: Clone the Repository and Install CoIN + AIUTA
 
 ```bash
 git clone https://github.com/sergio-contente/projet-ia-2026.git
-cd projet-ia-2026/ai_project/aiuta_vlmr1_project
+cd projet-ia-2026/ai_project
+
+# Install CoIN requirements
+cd CoIN-fork
+pip install -r our_requirements.txt
+cd ..
+
+# Install AIUTA-VLM-R1 package (editable, into the same env)
+cd aiuta_vlmr1_project
 pip install -e .
+cd ..
 ```
 
-### Requirements
+### Step 7: Install GroundingDINO (with CUDA ops)
+
+GroundingDINO must be built with GPU access for CUDA extensions:
 
 ```bash
-# Core (aiuta env, Python 3.10)
-pip install torch>=2.1 transformers>=4.40 qwen-vl-utils accelerate \
-    networkx>=3.0 pyyaml>=6.0 Pillow>=10.0 numpy>=1.24 matplotlib>=3.7
+cd GroundingDINO
+export TORCH_CUDA_ARCH_LIST="8.9;9.0"  # adjust for your GPU
+pip install --no-build-isolation -e .
+cd ..
 
-# CoIN navigation (coin-hab env, Python 3.9)
-# See CoIN-fork/README.md for Habitat + VLFM setup
+# Verify CUDA ops:
+python -c "from groundingdino import _C; print('CUDA ops loaded')"
 ```
 
-### Running IDKVQA Evaluation (requires GPU)
+> **Note**: On SLURM clusters, this step must run inside a GPU job (`srun --gres=gpu:1 ...` or via sbatch).
+
+### Step 8: Install MobileSAM
 
 ```bash
-# Threshold mode (best φ₁)
+pip install git+https://github.com/ChaoningZhang/MobileSAM.git
+```
+
+### Step 9: Download Model Weights
+
+```bash
+mkdir -p data
+
+# GroundingDINO weights (used by VLFM, not replaced)
+wget -O data/groundingdino_swint_ogc.pth \
+  https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
+
+# MobileSAM weights
+wget -O data/mobile_sam.pt \
+  https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt
+
+# Generate dummy PointNav policy
+cd CoIN-fork
+python -m vlfm.utils.generate_dummy_policy
+cd ..
+```
+
+VLM-R1 weights are downloaded automatically from HuggingFace on first run.
+
+### Step 10: Download CoIN-Bench Dataset
+
+```bash
+pip install huggingface-hub
+cd CoIN-fork
+huggingface-cli download ftaioli/CoIN-Bench --repo-type dataset --local-dir CoIN-Bench
+```
+
+### Step 11: Link HM3D Scene Dataset
+
+```bash
+cd CoIN-fork
+mkdir -p data/scene_datasets
+ln -s /path/to/hm3d data/scene_datasets/hm3d
+```
+
+### Step 12: Set Environment Variables
+
+```bash
+cat >> ~/.bashrc << 'EOF'
+export VLFM_PYTHON=$(which python)
+export COIN_USE_VLMR1=1
+export AIUTA_VLMR1_CONFIG=/path/to/aiuta_vlmr1_project/configs/vlmr1_coin.yaml
+EOF
+source ~/.bashrc
+```
+
+---
+
+## Running
+
+### IDKVQA Offline Evaluation (requires GPU)
+
+```bash
+cd ai_project/aiuta_vlmr1_project
+
+# Raw mode (fair comparison to AIUTA baseline)
 python -m aiuta_vlmr1.evaluation.idkvqa_eval \
   --config configs/idkvqa_eval.yaml \
-  --mode threshold \
-  --output results/idkvqa/threshold_run.json
+  --mode raw \
+  --output results/idkvqa/raw_run.json
 
-# All modes
+# All modes via SLURM
 for MODE in raw threshold kg two_pass_kg relaxed entropy; do
   sbatch --export=ALL,MODE=$MODE slurm/run_idkvqa.sbatch
 done
 
 # Smoke test (5 samples)
-sbatch --export=ALL,MODE=threshold,LIMIT_ARG=5 slurm/run_idkvqa.sbatch
+sbatch --export=ALL,MODE=raw,LIMIT_ARG=5 slurm/run_idkvqa.sbatch
 ```
 
-### Running CoIN-Bench Online Evaluation
+### CoIN-Bench Online Evaluation (requires GPU + HM3D)
 
 ```bash
-# Launch MobileSAM server + Habitat evaluation
-cd CoIN-fork
-sbatch run_coin_vlmr1.sbatch  # configures both envs automatically
+cd ai_project
 
-# Or manually:
-export COIN_USE_VLMR1=1
-export AIUTA_VLMR1_CONFIG=/path/to/vlmr1_coin.yaml
+# Launch via SLURM (starts MobileSAM server + Habitat eval)
+sbatch run_coin_vlmr1.sbatch
+
+# Or manually (from CoIN-fork directory):
+cd CoIN-fork
 python -m vlfm.run \
   habitat.task.measurements.success.success_distance="0.25" \
   habitat_baselines.eval.split="val_seen" \
   habitat.dataset.data_path="CoIN-Bench/val_seen/val_seen.json.gz"
 ```
 
-### Running Tests (no GPU)
+### Unit Tests (no GPU)
 
 ```bash
 cd ai_project/aiuta_vlmr1_project
