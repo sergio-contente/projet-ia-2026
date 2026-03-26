@@ -95,19 +95,23 @@ def _embedding_match(
 
 
 def _known_pair_result(obj_val: str, target_val: str, loader: Any | None) -> str:
+    o = obj_val.strip().lower()
+    t = target_val.strip().lower()
+    if len(o.split()) <= 3 and len(t.split()) <= 3:
+        return "match" if o == t else "mismatch"
     if loader is not None:
         return _embedding_match(obj_val, target_val, loader)
-    if obj_val.strip().lower() == target_val.strip().lower():
-        return "match"
-    return "mismatch"
+    return "match" if o == t else "mismatch"
 
 
 def _negative_pair_result(obj_val: str, neg_val: str, loader: Any | None) -> str:
+    o = obj_val.strip().lower()
+    n = neg_val.strip().lower()
+    if len(o.split()) <= 3 and len(n.split()) <= 3:
+        return "match" if o == n else "mismatch"
     if loader is not None:
         return _embedding_match(obj_val, neg_val, loader)
-    if obj_val.strip().lower() == neg_val.strip().lower():
-        return "match"
-    return "mismatch"
+    return "match" if o == n else "mismatch"
 
 
 class GraphMatcher:
@@ -168,11 +172,13 @@ class GraphMatcher:
             return score
         # Score -1.0 = informação insuficiente (KG vazio, sem overlap obj/target, ou nada resolvido).
         # Não deixar o vlm_judge substituir a decisão nesses casos — forçar ASK.
-        if score == -1.0:
-            print(
-                f"[GraphMatcher] vlm_judge skipped — alignment inconclusive "
-                f"(score={score}, target_facts={target.num_facts})"
-            )
+        if score < tau_stop:
+            if score == -1.0:
+                print(f"[GraphMatcher] vlm_judge skipped — alignment inconclusive "
+                    f"(score={score}, target_facts={target.num_facts})")
+            else:
+                print(f"[GraphMatcher] vlm_judge skipped — KG score {score:.2f} "
+                    f"< tau_stop {tau_stop:.2f}, alignment authoritative")
             return score
         obj_desc = obj.to_natural_language()
         target_desc = target.to_natural_language()
