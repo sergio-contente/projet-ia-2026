@@ -354,20 +354,70 @@ class AIUTAPipeline:
                                     Certainty,
                                 )
 
-                                attr = Attribute(
-                                    name=attr_name,
-                                    value=SceneKnowledgeGraph._normalize_open_answer_value(
+                                det_low = det_answer.strip().lower().rstrip(".")
+                                parsed_yesno = SceneKnowledgeGraph._parse_yesno_question(
+                                    action.question or ""
+                                )
+
+                                if parsed_yesno is not None:
+                                    yn_attr, yn_val = parsed_yesno
+                                    if det_low.startswith("yes"):
+                                        attr = Attribute(
+                                            name=yn_attr,
+                                            value=yn_val,
+                                            certainty=Certainty.MEDIUM,
+                                            source=AttributeSource.VLM_REASONING,
+                                            timestep=timestep,
+                                        )
+                                        self._kg.update_attributes(oid, [attr])
+                                        print(
+                                            f"[AIUTAPipeline] Obj {oid!r} ← {yn_attr}={yn_val} "
+                                            f"(detection VQA confirmed)"
+                                        )
+                                    elif det_low.startswith("no"):
+                                        print(
+                                            f"[AIUTAPipeline] Obj {oid!r}: detection VQA denied "
+                                            f"{yn_attr}={yn_val} — not storing"
+                                        )
+                                    else:
+                                        val = SceneKnowledgeGraph._normalize_open_answer_value(
+                                            det_answer
+                                        )
+                                        if val and val not in ("i don't know", "unknown"):
+                                            attr = Attribute(
+                                                name=yn_attr,
+                                                value=val,
+                                                certainty=Certainty.LOW,
+                                                source=AttributeSource.VLM_REASONING,
+                                                timestep=timestep,
+                                            )
+                                            self._kg.update_attributes(oid, [attr])
+                                            print(
+                                                f"[AIUTAPipeline] Obj {oid!r} ← {yn_attr}={val} "
+                                                f"(detection VQA open answer)"
+                                            )
+                                else:
+                                    val = SceneKnowledgeGraph._normalize_open_answer_value(
                                         det_answer
-                                    ),
-                                    certainty=Certainty.MEDIUM,
-                                    source=AttributeSource.VLM_REASONING,
-                                    timestep=timestep,
-                                )
-                                self._kg.update_attributes(oid, [attr])
-                                print(
-                                    f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={attr.value} "
-                                    f"(from detection VQA)"
-                                )
+                                    )
+                                    if val and val not in ("yes", "no", "i don't know", "unknown"):
+                                        attr = Attribute(
+                                            name=attr_name,
+                                            value=val,
+                                            certainty=Certainty.MEDIUM,
+                                            source=AttributeSource.VLM_REASONING,
+                                            timestep=timestep,
+                                        )
+                                        self._kg.update_attributes(oid, [attr])
+                                        print(
+                                            f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={val} "
+                                            f"(from detection VQA)"
+                                        )
+                                    elif val in ("yes", "no"):
+                                        print(
+                                            f"[AIUTAPipeline] Obj {oid!r}: detection VQA "
+                                            f"returned '{val}' for open question — skipping"
+                                        )
 
                         if oracle_no and det_answer and det_answer.strip().lower().startswith("yes"):
                             print(
