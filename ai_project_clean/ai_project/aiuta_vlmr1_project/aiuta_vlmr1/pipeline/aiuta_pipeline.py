@@ -268,6 +268,8 @@ class AIUTAPipeline:
             )
             return self._last_step_result
 
+        self._questioner._current_observation = observation  # type: ignore[attr-defined]
+
         for det in det_result.detections:
             refined = self._questioner.process(
                 det, self._kg.target_facts, self._kg, timestep

@@ -1,4 +1,4 @@
-"""vlmr1_questioner.py — Self-Questioner using VLM-R1 reasoning. 0 extra calls."""
+"""vlmr1_questioner.py — Self-Questioner using VLM-R1 reasoning + description pass."""
 from __future__ import annotations
 
 import numpy as np
@@ -15,15 +15,128 @@ from .base import AbstractSelfQuestioner, RefinedDescription
 
 
 class VLMr1SelfQuestioner(AbstractSelfQuestioner):
-    def process(self, detection: Detection, target_facts: TargetFacts,
-                kg: SceneKnowledgeGraph, timestep: int = 0) -> RefinedDescription:
+
+    @staticmethod
+    def _describe_detection(observation, category: str) -> str | None:
+        """Single VLM call for a rich visual description of the detected object."""
+        tmp_path: str | None = None
+        try:
+            import os
+            import tempfile
+
+            import torch
+            from PIL import Image
+            from qwen_vl_utils import process_vision_info
+
+            from ..utils.model_loader import ModelLoader
+
+            if not ModelLoader._instances:
+                return None
+            loader = ModelLoader._instances[next(iter(ModelLoader._instances))]
+
+            if isinstance(observation, str):
+                img_url = f"file://{os.path.abspath(observation)}"
+            elif isinstance(observation, np.ndarray):
+                pil = Image.fromarray(observation.astype(np.uint8))
+                fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+                os.close(fd)
+                pil.save(tmp_path, format="JPEG", quality=95)
+                img_url = f"file://{os.path.abspath(tmp_path)}"
+            else:
+                return None
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a visual description assistant for indoor scenes. "
+                        "Describe objects briefly but specifically."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "image": img_url,
+                            "min_pixels": 256 * 28 * 28,
+                            "max_pixels": 512 * 28 * 28,
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Describe the {category} you see in this image. "
+                                f"Focus on distinctive visual features: colors, patterns, "
+                                f"textures, materials, nearby objects, and anything that "
+                                f"makes this specific {category} unique."
+                            ),
+                        },
+                    ],
+                },
+            ]
+
+            proc = loader.processor
+            text = proc.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            img_in, vid_in = process_vision_info(messages)
+            inputs = proc(
+                text=[text],
+                images=img_in,
+                videos=vid_in,
+                padding=True,
+                return_tensors="pt",
+            ).to(loader.device)
+
+            with torch.inference_mode():
+                gen = loader.model.generate(
+                    **inputs,
+                    max_new_tokens=128,
+                    do_sample=False,
+                    use_cache=False,
+                )
+
+            trimmed = [o[len(i) :] for i, o in zip(inputs.input_ids, gen)]
+            raw = proc.batch_decode(
+                trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )[0].strip()
+
+            print(
+                f"[VLMr1SelfQuestioner] Description pass for {category}: {raw[:200]!r}"
+            )
+            return raw if raw else None
+        except Exception as e:
+            print(f"[VLMr1SelfQuestioner] Description pass error: {e}")
+            return None
+        finally:
+            if tmp_path:
+                try:
+                    import os
+
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    def process(
+        self,
+        detection: Detection,
+        target_facts: TargetFacts,
+        kg: SceneKnowledgeGraph,
+        timestep: int = 0,
+    ) -> RefinedDescription:
         if not detection.reasoning:
-            return RefinedDescription(object_node=None, text_description="", is_valid=False)
+            return RefinedDescription(
+                object_node=None, text_description="", is_valid=False
+            )
         extraction = TripleExtractor.extract_all(
-            reasoning=detection.reasoning, category=detection.label,
-            queried_objects=[], timestep=timestep,
+            reasoning=detection.reasoning,
+            category=detection.label,
+            queried_objects=[],
+            timestep=timestep,
         )
-        node = kg.add_object_merged(category=detection.label, bbox=detection.bbox, timestep=timestep)
+        node = kg.add_object_merged(
+            category=detection.label, bbox=detection.bbox, timestep=timestep
+        )
         if hasattr(detection, "image") and detection.image is not None:
             node.detected_crop = np.array(detection.image)
         if extraction.attributes:
@@ -31,21 +144,33 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
         for rel in extraction.spatial_relations:
             kg.add_spatial_relation(node.obj_id, rel)
 
-        think_features = extract_think_features(detection.reasoning, detection.label)
-        if think_features:
-            for feat in think_features:
-                attr_name = feature_to_attribute_name(feat)
-                attr = Attribute(
-                    name=attr_name,
-                    value="yes",
-                    certainty=Certainty.MEDIUM,
-                    source=AttributeSource.VLM_REASONING,
-                    timestep=timestep,
+        # Description pass: 1 VLM call for rich visual description
+        obs = getattr(detection, "image", None)
+        if obs is None:
+            obs = getattr(self, "_current_observation", None)
+        description = self._describe_detection(obs, detection.label)
+
+        if description:
+            features = extract_think_features(description, detection.label)
+            if features:
+                for feat in features:
+                    attr_name = feature_to_attribute_name(feat)
+                    attr = Attribute(
+                        name=attr_name,
+                        value="yes",
+                        certainty=Certainty.MEDIUM,
+                        source=AttributeSource.VLM_REASONING,
+                        timestep=timestep,
+                    )
+                    kg.update_attributes(node.obj_id, [attr])
+                node._think_features = features  # type: ignore[attr-defined]
+                print(
+                    f"[VLMr1SelfQuestioner] Extracted features for "
+                    f"'{node.obj_id}': {features}"
                 )
-                kg.update_attributes(node.obj_id, [attr])
-            node._think_features = think_features  # type: ignore[attr-defined]
-            print(f"[VLMr1SelfQuestioner] Think features for '{node.obj_id}': {think_features}")
 
         return RefinedDescription(
-            object_node=node, text_description=node.to_natural_language(), is_valid=True,
+            object_node=node,
+            text_description=node.to_natural_language(),
+            is_valid=True,
         )

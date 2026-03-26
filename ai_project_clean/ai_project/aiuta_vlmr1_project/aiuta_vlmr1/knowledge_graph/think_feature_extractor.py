@@ -1,32 +1,50 @@
 """
 think_feature_extractor.py — Extract discriminative visual features from
-VLM-R1 <think> blocks for contextual question generation.
+VLM description passes for contextual question generation.
 
 Replaces generic template questions ("What color?") with specific feature
 questions ("Does the bed have a blue mattress?") that better discriminate
 between object instances.
 
-Cost: 0 extra VLM calls — features come from the existing detection reasoning.
+Features come from a single description-pass VLM call (+1 call per detection).
 """
 from __future__ import annotations
 
 import re
 
 _FEATURE_PATTERNS = [
-    # "with a blue mattress" / "with wooden frame"
-    r"(?:with|has|have)\s+(?:a\s+|an\s+)?((?:\w+\s+){1,3}\w+?)(?:[.,;]|\s+and\s|\s+near|\s+in\s|$)",
-    # "{adjective} {noun}" combos for visual descriptors
-    r"((?:(?:blue|red|white|black|green|yellow|brown|gray|grey|pink|purple|orange|beige|dark|light|"
-    r"striped|checkered|plaid|floral|patterned|wooden|metal|leather|glass|fabric|quilted|"
-    r"large|small|round|square|tall|short|thin|thick|old|new|modern|antique|rustic)\s+)+"
+    # "has/with a {adj} {noun}"
+    r"(?:has|with|have)\s+(?:a\s+|an\s+)?((?:(?:\w+\s+){0,2})"
     r"(?:mattress|pillow|blanket|sheet|frame|headboard|footboard|cover|cushion|"
-    r"drawer|handle|door|shelf|leg|arm|seat|back|top|surface|panel|"
-    r"lamp|table|nightstand|rug|curtain|decoration|pattern|design)\w*)",
+    r"drawer|handle|door|shelf|leg|arm|seat|back|surface|panel|"
+    r"lamp|table|nightstand|rug|curtain|pattern|design|"
+    r"cabinet|countertop|sink|faucet|mirror|towel|"
+    r"armrest|backrest|upholstery|finish|trim|base|"
+    r"picture|painting|poster|photograph|artwork)\w*)",
+    # "{color/adj} {noun}" standalone
+    r"\b((?:blue|red|white|black|green|yellow|brown|gray|grey|pink|purple|orange|beige|"
+    r"dark|light|striped|checkered|plaid|floral|patterned|quilted|embroidered|"
+    r"wooden|metal|leather|glass|fabric|ceramic|marble|wicker|"
+    r"large|small|round|square|tall|short|modern|antique|rustic|vintage)\s+"
+    r"(?:mattress|pillow|blanket|sheet|frame|headboard|cover|cushion|"
+    r"drawer|handle|door|shelf|surface|panel|"
+    r"lamp|table|nightstand|rug|curtain|"
+    r"cabinet|countertop|sink|faucet|"
+    r"armrest|backrest|upholstery|finish|base|"
+    r"picture|painting|poster|photograph)\w*)",
+    # Spatial: "near/next to {object}"
+    r"(?:near|next to|beside|against|in front of)\s+(?:a\s+|an\s+|the\s+)?"
+    r"((?:\w+\s+){0,1}(?:window|wall|door|desk|table|chair|nightstand|lamp|"
+    r"dresser|closet|mirror|shelf|bookcase|couch|sofa|sink|toilet|bathtub|"
+    r"stove|refrigerator|counter)\w*)",
 ]
 
 _GENERIC_FEATURES = frozenset({
     "the bed", "a bed", "the object", "an object", "the room",
     "the image", "the scene", "the wall", "the floor",
+    "the ceiling", "this image", "the background",
+    "the chair", "a chair", "the couch", "a couch",
+    "the cabinet", "a cabinet", "the picture", "a picture",
 })
 
 
@@ -34,7 +52,7 @@ def extract_think_features(
     reasoning: str, category: str, max_features: int = 5
 ) -> list[str]:
     """
-    Extract distinctive visual feature phrases from a <think> reasoning block.
+    Extract distinctive visual feature phrases from a description or reasoning block.
 
     Returns short descriptive phrases like:
       ["blue mattress", "wooden frame", "striped blanket"]
