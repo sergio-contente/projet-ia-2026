@@ -166,9 +166,13 @@ class GraphMatcher:
             return score
         if vlm_judge_fn is None:
             return score
-        # Sem facts no KG, o vlm_judge não é suficiente para STOP — forçar ASK primeiro.
-        if target.num_facts == 0:
-            print(f"[GraphMatcher] vlm_judge skipped — no target facts yet (score={score})")
+        # Score -1.0 = informação insuficiente (KG vazio, sem overlap obj/target, ou nada resolvido).
+        # Não deixar o vlm_judge substituir a decisão nesses casos — forçar ASK.
+        if score == -1.0:
+            print(
+                f"[GraphMatcher] vlm_judge skipped — alignment inconclusive "
+                f"(score={score}, target_facts={target.num_facts})"
+            )
             return score
         obj_desc = obj.to_natural_language()
         target_desc = target.to_natural_language()

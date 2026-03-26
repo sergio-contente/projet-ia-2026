@@ -64,6 +64,102 @@ class AIUTAPipeline:
         self._num_visual_comparisons = 0
         self._episode_log: list[dict] = []
         self._last_step_result: PipelineStepResult | None = None
+        self._current_observation: Any = None
+
+    def _ask_about_detection(self, question: str) -> str | None:
+        """VQA on the current FPV / detection frame (same ModelLoader as detector)."""
+        obs = getattr(self, "_current_observation", None)
+        if obs is None or not (question or "").strip():
+            return None
+        tmp_path: str | None = None
+        try:
+            import os
+            import tempfile
+
+            import numpy as np
+            import torch
+            from PIL import Image
+            from qwen_vl_utils import process_vision_info
+
+            from ..utils.model_loader import ModelLoader
+
+            if not ModelLoader._instances:
+                return None
+            loader = ModelLoader._instances[next(iter(ModelLoader._instances))]
+
+            if isinstance(obs, str):
+                img_url = f"file://{os.path.abspath(obs)}"
+            elif isinstance(obs, np.ndarray):
+                pil = Image.fromarray(obs.astype(np.uint8))
+                fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+                os.close(fd)
+                pil.save(tmp_path, format="JPEG", quality=95)
+                img_url = f"file://{os.path.abspath(tmp_path)}"
+            else:
+                return None
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant. "
+                        "Answer the question briefly in 1-3 words based on what you see in the image."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "image": img_url,
+                            "min_pixels": 256 * 28 * 28,
+                            "max_pixels": 512 * 28 * 28,
+                        },
+                        {"type": "text", "text": question},
+                    ],
+                },
+            ]
+
+            proc = loader.processor
+            text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            img_in, vid_in = process_vision_info(messages)
+            inputs = proc(
+                text=[text],
+                images=img_in,
+                videos=vid_in,
+                padding=True,
+                return_tensors="pt",
+            ).to(loader.device)
+
+            with torch.inference_mode():
+                gen = loader.model.generate(
+                    **inputs,
+                    max_new_tokens=32,
+                    do_sample=False,
+                    use_cache=False,
+                )
+
+            trimmed = [o[len(i) :] for i, o in zip(inputs.input_ids, gen)]
+            raw = proc.batch_decode(
+                trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )[0]
+            answer = raw.strip().rstrip(".")
+            print(f"[AIUTAPipeline] Detection VQA: Q={question!r} → A={answer!r}")
+            low = answer.lower()
+            if not answer or low in ("i don't know", "i dont know", "unknown"):
+                return None
+            return answer
+        except Exception as e:
+            print(f"[AIUTAPipeline] Detection VQA error: {e}")
+            return None
+        finally:
+            if tmp_path:
+                try:
+                    import os
+
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _create_detector(self, config: Config) -> AbstractDetector:
         if config.detector_type == DetectorType.VLMR1:
@@ -130,9 +226,11 @@ class AIUTAPipeline:
         self._num_visual_comparisons = 0
         self._episode_log = []
         self._last_step_result = None
+        self._current_observation = None
 
     def on_detection(self, observation, timestep: int) -> PipelineStepResult:
         self._timestep = timestep
+        self._current_observation = observation
         kg_context = self._kg.get_kg_context_string(self._target_category)
 
         if isinstance(observation, str):
@@ -216,6 +314,37 @@ class AIUTAPipeline:
                     self._num_questions_asked += 1
                     asked_here += 1
                     log_entry["user_response"] = response
+
+                    det_answer = self._ask_about_detection(action.question or "")
+                    log_entry["detection_answer"] = det_answer
+                    on = refined.object_node
+                    if det_answer is not None and on is not None:
+                        attr_name = SceneKnowledgeGraph._infer_attribute_from_question(
+                            action.question or ""
+                        )
+                        oid = getattr(on, "obj_id", None)
+                        if attr_name is not None and oid and self._kg.get_object(oid) is not None:
+                            from ..knowledge_graph.schema import (
+                                Attribute,
+                                AttributeSource,
+                                Certainty,
+                            )
+
+                            attr = Attribute(
+                                name=attr_name,
+                                value=SceneKnowledgeGraph._normalize_open_answer_value(
+                                    det_answer
+                                ),
+                                certainty=Certainty.MEDIUM,
+                                source=AttributeSource.VLM_REASONING,
+                                timestep=timestep,
+                            )
+                            self._kg.update_attributes(oid, [attr])
+                            print(
+                                f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={attr.value} "
+                                f"(from detection VQA)"
+                            )
+
                     log_entry["target_facts_snapshot"] = {
                         "known": dict(self._kg.target_facts.known_attributes),
                         "negative": dict(self._kg.target_facts.negative_attributes),
