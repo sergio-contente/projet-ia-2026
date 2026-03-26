@@ -49,8 +49,8 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
                 {
                     "role": "system",
                     "content": (
-                        "You are a visual description assistant for indoor scenes. "
-                        "Describe objects briefly but specifically."
+                        "You are a visual description assistant. "
+                        "List distinctive features as short comma-separated phrases."
                     ),
                 },
                 {
@@ -65,10 +65,13 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
                         {
                             "type": "text",
                             "text": (
-                                f"Describe the {category} you see in this image. "
-                                f"Focus on distinctive visual features: colors, patterns, "
-                                f"textures, materials, nearby objects, and anything that "
-                                f"makes this specific {category} unique."
+                                f"List the 3-5 most distinctive visual features of the "
+                                f"{category} in this image. Write each feature as a short "
+                                f"phrase (2-4 words), separated by commas. "
+                                f"Focus on: colors, patterns, textures, materials, size, "
+                                f"nearby objects. "
+                                f"Example: blue mattress, wooden frame, near window, "
+                                f"striped pillow"
                             ),
                         },
                     ],
@@ -91,7 +94,7 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
             with torch.inference_mode():
                 gen = loader.model.generate(
                     **inputs,
-                    max_new_tokens=128,
+                    max_new_tokens=100,
                     do_sample=False,
                     use_cache=False,
                 )
