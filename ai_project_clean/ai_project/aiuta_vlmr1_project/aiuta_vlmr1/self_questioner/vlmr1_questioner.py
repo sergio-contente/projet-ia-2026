@@ -173,7 +173,19 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
         if description:
             features = extract_think_features(description, detection.label)
             if features:
-                from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
+                from ..knowledge_graph.scene_graph import (
+                    SceneKnowledgeGraph,
+                    _classify_value_as_attribute,
+                )
+
+                _THINK_TO_CANONICAL: dict[str, str] = {
+                    "think_near": "near",
+                    "think_size": "size",
+                    "think_texture": "texture",
+                    "think_fabric": "material",
+                    "think_pattern": "pattern",
+                    "think_location": "location",
+                }
 
                 for feat in features:
                     attr_name = feature_to_attribute_name(feat)
@@ -189,6 +201,25 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
                         timestep=timestep,
                     )
                     kg.update_attributes(node.obj_id, [attr])
+
+                    canonical = (
+                        _THINK_TO_CANONICAL.get(attr_name)
+                        or _classify_value_as_attribute(qualifier)
+                    )
+                    if canonical and canonical != attr_name and not node.has_attribute(canonical):
+                        canon_attr = Attribute(
+                            name=canonical,
+                            value=qualifier,
+                            certainty=Certainty.MEDIUM,
+                            source=AttributeSource.VLM_REASONING,
+                            timestep=timestep,
+                        )
+                        kg.update_attributes(node.obj_id, [canon_attr])
+                        print(
+                            f"[VLMr1SelfQuestioner] Canonical: "
+                            f"{attr_name}={qualifier} → {canonical}={qualifier}"
+                        )
+
                 node._think_features = features  # type: ignore[attr-defined]
                 print(
                     f"[VLMr1SelfQuestioner] Extracted features for "
