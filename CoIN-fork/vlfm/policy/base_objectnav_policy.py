@@ -584,7 +584,7 @@ class VLFMConfig:
     text_prompt: str = "Seems like there is a target_object ahead."
     pointnav_policy_path: str = "data/pointnav_weights.pth"
     depth_image_shape: Tuple[int, int] = (224, 224)
-    pointnav_stop_radius: float = 0.75
+    pointnav_stop_radius: float = 0.35
     use_max_confidence: bool = False
     object_map_erosion_size: int = 5
     exploration_thresh: float = 0.0

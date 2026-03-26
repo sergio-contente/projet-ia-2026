@@ -160,9 +160,14 @@ class ObjectPointCloudMap:
             # Verificar se esta posição já foi avaliada pelo visual judge
             # (usa rejected_cloud + clouds, não detection_cloud)
             if self.is_detection_evaluated(global_cloud, object_name):
-                # Posição já avaliada — atualizar posição no clouds se confirmada
                 if object_name in self.clouds:
                     self.clouds[object_name] = global_cloud
+                    print(f"[VLMr1] Updated goal cloud for '{object_name}' (re-detection while navigating)")
+                return False
+
+            MIN_STEPS_FOR_PIPELINE = 12
+            if total_num_steps < MIN_STEPS_FOR_PIPELINE:
+                print(f"[VLMr1] Skipping pipeline during initialize (step={total_num_steps})")
                 return False
 
             if self._vlmr1_bridge is None:
