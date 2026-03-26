@@ -1,17 +1,8 @@
-# Cluster / Slurm logs under ai_project (may echo HF_TOKEN from sourced .hf_env)
-ai_project_clean/ai_project/logs/*.err
-ai_project_clean/ai_project/logs/*.out
-
-# Slurm log files (may contain secrets from debug output)
-aiuta_vlmr1_project/results/logs/*.err
-aiuta_vlmr1_project/results/logs/*.out
-
-aiuta_vlmr1/results/logs/*.err
-aiuta_vlmr1/results/logs/*.out
-
-# Same paths under ai_project_clean (repo layout)
-ai_project_clean/**/results/logs/*.err
-ai_project_clean/**/results/logs/*.out
+# Slurm / cluster log files (may contain secrets from debug output)
+**/results/logs/*.err
+**/results/logs/*.out
+**/logs/*.err
+**/logs/*.out
 
 # Environment files
 .hf_env
