@@ -114,7 +114,6 @@ class SceneKnowledgeGraph:
             (r"what material ", "material"),
             (r"is the .+ large or small", "size"),
             (r"in which room ", "location"),
-            # Non-greedy para "What is the bed near or next to?"
             (r"what is the .+? near", "near"),
             (r"does the .+ have a glass door", "has_glass_door"),
             (r"does the .+ have a handle", "has_handle"),
@@ -130,6 +129,11 @@ class SceneKnowledgeGraph:
                 m = re.search(pat, q)
                 if m:
                     return m.group(1)
+        # Think-feature questions: "Does the X have a {feature}?"
+        m = re.search(r"does the .+ have (?:a |an )?([\w\s]+?)\s*\??\s*$", q)
+        if m:
+            feat = m.group(1).strip()
+            return f"think_{re.sub(r'[^a-z0-9]+', '_', feat).strip('_')}"
         return None
 
     @staticmethod

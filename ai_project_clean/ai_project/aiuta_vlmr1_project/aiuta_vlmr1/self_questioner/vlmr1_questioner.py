@@ -4,10 +4,15 @@ from __future__ import annotations
 import numpy as np
 
 from ..detector.base import Detection
-from ..knowledge_graph.schema import TargetFacts
+from ..knowledge_graph.schema import Attribute, AttributeSource, Certainty, TargetFacts
 from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
+from ..knowledge_graph.think_feature_extractor import (
+    extract_think_features,
+    feature_to_attribute_name,
+)
 from ..knowledge_graph.triple_extractor import TripleExtractor
 from .base import AbstractSelfQuestioner, RefinedDescription
+
 
 class VLMr1SelfQuestioner(AbstractSelfQuestioner):
     def process(self, detection: Detection, target_facts: TargetFacts,
@@ -25,6 +30,22 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
             kg.update_attributes(node.obj_id, extraction.attributes)
         for rel in extraction.spatial_relations:
             kg.add_spatial_relation(node.obj_id, rel)
+
+        think_features = extract_think_features(detection.reasoning, detection.label)
+        if think_features:
+            for feat in think_features:
+                attr_name = feature_to_attribute_name(feat)
+                attr = Attribute(
+                    name=attr_name,
+                    value="yes",
+                    certainty=Certainty.MEDIUM,
+                    source=AttributeSource.VLM_REASONING,
+                    timestep=timestep,
+                )
+                kg.update_attributes(node.obj_id, [attr])
+            node._think_features = think_features  # type: ignore[attr-defined]
+            print(f"[VLMr1SelfQuestioner] Think features for '{node.obj_id}': {think_features}")
+
         return RefinedDescription(
             object_node=node, text_description=node.to_natural_language(), is_valid=True,
         )

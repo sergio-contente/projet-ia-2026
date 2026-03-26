@@ -315,35 +315,40 @@ class AIUTAPipeline:
                     asked_here += 1
                     log_entry["user_response"] = response
 
-                    det_answer = self._ask_about_detection(action.question or "")
-                    log_entry["detection_answer"] = det_answer
-                    on = refined.object_node
-                    if det_answer is not None and on is not None:
-                        attr_name = SceneKnowledgeGraph._infer_attribute_from_question(
-                            action.question or ""
-                        )
-                        oid = getattr(on, "obj_id", None)
-                        if attr_name is not None and oid and self._kg.get_object(oid) is not None:
-                            from ..knowledge_graph.schema import (
-                                Attribute,
-                                AttributeSource,
-                                Certainty,
-                            )
+                    attr_name = SceneKnowledgeGraph._infer_attribute_from_question(
+                        action.question or ""
+                    )
+                    is_think_q = attr_name is not None and attr_name.startswith("think_")
 
-                            attr = Attribute(
-                                name=attr_name,
-                                value=SceneKnowledgeGraph._normalize_open_answer_value(
-                                    det_answer
-                                ),
-                                certainty=Certainty.MEDIUM,
-                                source=AttributeSource.VLM_REASONING,
-                                timestep=timestep,
-                            )
-                            self._kg.update_attributes(oid, [attr])
-                            print(
-                                f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={attr.value} "
-                                f"(from detection VQA)"
-                            )
+                    if not is_think_q:
+                        det_answer = self._ask_about_detection(action.question or "")
+                        log_entry["detection_answer"] = det_answer
+                        on = refined.object_node
+                        if det_answer is not None and on is not None:
+                            oid = getattr(on, "obj_id", None)
+                            if attr_name is not None and oid and self._kg.get_object(oid) is not None:
+                                from ..knowledge_graph.schema import (
+                                    Attribute,
+                                    AttributeSource,
+                                    Certainty,
+                                )
+
+                                attr = Attribute(
+                                    name=attr_name,
+                                    value=SceneKnowledgeGraph._normalize_open_answer_value(
+                                        det_answer
+                                    ),
+                                    certainty=Certainty.MEDIUM,
+                                    source=AttributeSource.VLM_REASONING,
+                                    timestep=timestep,
+                                )
+                                self._kg.update_attributes(oid, [attr])
+                                print(
+                                    f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={attr.value} "
+                                    f"(from detection VQA)"
+                                )
+                    else:
+                        log_entry["detection_answer"] = "(think feature — obj already has attribute)"
 
                     log_entry["target_facts_snapshot"] = {
                         "known": dict(self._kg.target_facts.known_attributes),
