@@ -30,8 +30,17 @@ class VLMr1Oracle:
         self._target_object = target_object
         print(f"[VLMr1Oracle] Instance image set for target: {target_object}")
 
+    @staticmethod
+    def _is_yesno_question(question: str) -> bool:
+        q = question.strip().lower()
+        yesno_prefixes = ("is ", "does ", "can ", "are ", "has ", "do ", "was ", "were ", "could ")
+        return q.startswith(yesno_prefixes)
+
     def answer(self, question: str) -> str:
-        """Answer a question about the instance_imagegoal. Returns 'yes', 'no', or 'I don't know'."""
+        """Answer a question about the instance_imagegoal.
+        For yes/no questions: returns 'yes', 'no', or 'I don't know'.
+        For open questions (What/Which/Where/How): returns the raw answer.
+        """
         if self._instance_image is None:
             return "I don't know"
         try:
@@ -41,6 +50,16 @@ class VLMr1Oracle:
                     self._loader = ModelLoader._instances[key]
                 else:
                     return "I don't know"
+
+            is_yesno = self._is_yesno_question(question)
+
+            if is_yesno:
+                system_prompt = "You are a helpful assistant. Answer only with yes, no, or I don't know."
+            else:
+                system_prompt = (
+                    "You are a helpful assistant. "
+                    "Answer the question briefly in 1-3 words based on what you see in the image."
+                )
 
             pil_image = Image.fromarray(self._instance_image)
 
@@ -53,7 +72,7 @@ class VLMr1Oracle:
                 messages = [
                     {
                         "role": "system",
-                        "content": "You are a helpful assistant. Answer only with yes, no, or I don't know.",
+                        "content": system_prompt,
                     },
                     {
                         "role": "user",
@@ -85,7 +104,7 @@ class VLMr1Oracle:
                 with torch.inference_mode():
                     gen = self._loader.model.generate(
                         **inputs,
-                        max_new_tokens=16,
+                        max_new_tokens=32,
                         do_sample=False,
                         use_cache=False,
                     )
@@ -94,13 +113,20 @@ class VLMr1Oracle:
                 raw = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
                 raw_l = raw.strip().lower()
 
-                print(f"[VLMr1Oracle] Q: {question!r} → A: {raw_l!r}")
+                print(f"[VLMr1Oracle] Q: {question!r} → A: {raw_l!r} (yesno={is_yesno})")
 
-                if raw_l.startswith("yes"):
-                    return "yes"
-                if raw_l.startswith("no"):
-                    return "no"
-                return "I don't know"
+                if is_yesno:
+                    if raw_l.startswith("yes"):
+                        return "yes"
+                    if raw_l.startswith("no"):
+                        return "no"
+                    return "I don't know"
+                else:
+                    # Open question: return raw answer stripped of trailing punctuation
+                    answer = raw.strip().rstrip(".")
+                    if not answer:
+                        return "I don't know"
+                    return answer
             finally:
                 try:
                     os.unlink(tmp_path)

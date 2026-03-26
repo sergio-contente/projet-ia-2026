@@ -57,6 +57,7 @@ class TriggerConfig:
     tau_stop: float = 0.8       # alignment score >= this -> STOP
     tau_skip: float = 0.2       # alignment score < this -> CONTINUE (skip)
     max_interaction_rounds: int = 4
+    max_questions_per_episode: int = 6  # budget: force STOP after this many questions
 
 
 @dataclass

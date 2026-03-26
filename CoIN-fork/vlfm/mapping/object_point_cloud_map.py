@@ -55,6 +55,7 @@ class ObjectPointCloudMap:
         self.detection_cloud = {}
         self.object_unique_id = 1
         self._rejection_count = {}
+        self._total_rejection_count = {}
         if self._use_vlmr1:
             self._rejected_cloud = {}
         if self.vlm_agent_brain is not None:
@@ -199,19 +200,36 @@ class ObjectPointCloudMap:
             self._rejection_count[object_name] = self._rejection_count.get(object_name, 0) + 1
 
             if self._rejection_count[object_name] >= 3:
-                print(
-                    Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
-                    f"{self._rejection_count[object_name]}x — navegando para posição mais incerta"
-                )
                 # Navegar para a posição com maior entropia (modelo mais incerto = mais provável de ser o alvo)
                 best_cloud, best_entropy = max(
                     self._rejected_cloud[object_name],
                     key=lambda x: x[1],
                 )
-                print(f"[VLMr1] Melhor entropia: {best_entropy:.3f}")
-                self.clouds[object_name] = best_cloud  # substituir, não acumular
-                self._rejection_count[object_name] = 0
-                self._rejected_cloud.pop(object_name, None)
+
+                if not hasattr(self, "_total_rejection_count"):
+                    self._total_rejection_count = {}
+                self._total_rejection_count[object_name] = self._total_rejection_count.get(object_name, 0) + 1
+
+                if self._total_rejection_count[object_name] >= 2:
+                    print(
+                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
+                        f"{self._rejection_count[object_name]}x total "
+                        f"({self._total_rejection_count[object_name]} cycles) "
+                        f"— forçando aceitação como melhor candidato (entropy={best_entropy:.3f})"
+                    )
+                    self.clouds[object_name] = best_cloud
+                    self._rejection_count[object_name] = 0
+                    self._rejected_cloud.pop(object_name, None)
+                    return True  # sinalizar ao caller que é para navegar + stop
+                else:
+                    print(
+                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
+                        f"{self._rejection_count[object_name]}x — navegando para posição mais incerta "
+                        f"(entropy={best_entropy:.3f})"
+                    )
+                    self.clouds[object_name] = best_cloud
+                    self._rejection_count[object_name] = 0
+                    self._rejected_cloud.pop(object_name, None)
 
             return False
 

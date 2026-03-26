@@ -15,6 +15,11 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
+# Entropy threshold for visual judge soft-maybe.
+# Below this: model is confident in rejection → hard "no".
+# At or above: model is uncertain → treat as "maybe" and delegate to KG alignment.
+ENTROPY_MAYBE_THRESHOLD = 0.04
+
 
 def _import_aiuta() -> Any:
     try:
@@ -82,12 +87,18 @@ class VLMr1Bridge:
             if detected_crop is not None:
                 try:
                     is_match, entropy = self._oracle.answer_with_detection_image(detected_crop)
-                    print(f"[VLMr1Bridge] Visual judge → {'yes' if is_match else 'no'} (entropy={entropy:.3f})")
                     try:
                         self._last_visual_entropy = entropy
                     except Exception:
                         pass
-                    return is_match
+                    if is_match:
+                        print(f"[VLMr1Bridge] Visual judge → yes (entropy={entropy:.3f})")
+                        return True
+                    if entropy >= ENTROPY_MAYBE_THRESHOLD:
+                        print(f"[VLMr1Bridge] Visual judge → soft-maybe (entropy={entropy:.3f} >= {ENTROPY_MAYBE_THRESHOLD})")
+                        return True
+                    print(f"[VLMr1Bridge] Visual judge → hard-no (entropy={entropy:.3f} < {ENTROPY_MAYBE_THRESHOLD})")
+                    return False
                 except Exception as e:
                     print(f"[VLMr1Bridge] Visual judge fallback to text: {e}")
 

@@ -149,6 +149,27 @@ class AIUTAPipeline:
         raw_n = len(det_result.detections)
         valid_n = 0
 
+        # Budget check: if we've already asked too many questions this episode,
+        # force STOP on any valid detection to avoid wasting budget indefinitely.
+        max_q = getattr(self._config.trigger, "max_questions_per_episode", 6)
+        if self._num_questions_asked >= max_q and raw_n > 0:
+            print(
+                f"[AIUTAPipeline] Question budget exhausted "
+                f"({self._num_questions_asked}/{max_q}) — forcing STOP"
+            )
+            final_signal = PolicySignal.STOP
+            self._last_step_result = PipelineStepResult(
+                signal=final_signal,
+                num_raw_detections=raw_n,
+                num_valid_detections=0,
+                detector_latency_sec=det_result.latency_sec,
+                detector_preprocess_sec=det_result.preprocess_latency_sec,
+                detector_generate_sec=det_result.generate_latency_sec,
+                detector_parse_sec=det_result.parse_latency_sec,
+                asked_questions_in_step=0,
+            )
+            return self._last_step_result
+
         for det in det_result.detections:
             refined = self._questioner.process(
                 det, self._kg.target_facts, self._kg, timestep
@@ -191,7 +212,7 @@ class AIUTAPipeline:
 
                 if action.type == ActionType.ASK:
                     response = self._ask_human(action.question or "")
-                    self._kg.update_target_facts(response, timestep)
+                    self._kg.update_target_facts(response, timestep, question=action.question)
                     self._num_questions_asked += 1
                     asked_here += 1
                     log_entry["user_response"] = response

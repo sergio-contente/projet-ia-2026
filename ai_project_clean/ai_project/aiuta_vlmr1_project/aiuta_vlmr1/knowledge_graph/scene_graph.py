@@ -103,7 +103,37 @@ class SceneKnowledgeGraph:
     def all_objects(self) -> Iterator[ObjectNode]:
         return iter(self._nodes.values())
 
-    def update_target_facts(self, user_response: str, timestep: int = 0) -> None:
+    @staticmethod
+    def _infer_attribute_from_question(question: str) -> str | None:
+        """Reverse-map a question to the attribute name it asks about."""
+        import re
+
+        q = question.strip().lower()
+        patterns = [
+            (r"what colou?r ", "color"),
+            (r"what material ", "material"),
+            (r"is the .+ large or small", "size"),
+            (r"in which room ", "location"),
+            (r"what is the .+ near", "near"),
+            (r"does the .+ have a glass door", "has_glass_door"),
+            (r"does the .+ have a handle", "has_handle"),
+            (r"does the .+ have drawers", "has_drawer"),
+            (r"is the .+ open or closed", "is_open"),
+            (r"what is the (\w+) of", None),
+        ]
+        for pat, attr in patterns:
+            if attr is not None:
+                if re.search(pat, q):
+                    return attr
+            else:
+                m = re.search(pat, q)
+                if m:
+                    return m.group(1)
+        return None
+
+    def update_target_facts(
+        self, user_response: str, timestep: int = 0, question: str | None = None,
+    ) -> None:
         from .target_fact_parser import parse_user_response_to_facts
 
         facts = parse_user_response_to_facts(user_response)
@@ -116,6 +146,19 @@ class SceneKnowledgeGraph:
                 else:
                     self.target_facts.add_positive(f.attribute, f.value, f"{f.provenance}|{src}")
             return
+
+        # If we have the question context, infer the attribute directly
+        if question is not None:
+            attr = self._infer_attribute_from_question(question)
+            if attr is not None:
+                r = user_response.strip().lower().rstrip(".")
+                if r and r not in ("i don't know", "i dont know", "unknown"):
+                    is_neg = r.startswith("no")
+                    if is_neg:
+                        self.target_facts.add_negative(attr, r.lstrip("no").strip(" ,"), f"question_attr|{src}")
+                    else:
+                        self.target_facts.add_positive(attr, r, f"question_attr|{src}")
+                    return
 
         r = user_response.strip().lower()
         is_neg = any(r.startswith(p) for p in ("no", "not", "it is not", "it\'s not"))
