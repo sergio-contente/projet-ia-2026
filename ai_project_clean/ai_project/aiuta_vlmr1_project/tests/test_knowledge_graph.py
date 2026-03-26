@@ -49,9 +49,19 @@ class TestGraphMatcher:
     def test_no_facts(self):
         assert GraphMatcher.compute_alignment(self._node({"color": "brown"}), TargetFacts()) == -1.0
 
+    def test_single_resolved_forces_ask(self):
+        t = TargetFacts()
+        t.add_positive("color", "white")
+        t.add_positive("material", "wood")
+        node = self._node({"color": "white"})
+        assert GraphMatcher.compute_alignment(node, t) == -1.0
+
     def test_perfect_match(self):
-        t = TargetFacts(); t.add_positive("color", "white")
-        assert GraphMatcher.compute_alignment(self._node({"color": "white"}), t) == 1.0
+        attrs = {"color": "white", "material": "wood", "size": "small", "location": "bedroom", "near": "window"}
+        t = TargetFacts()
+        for k, v in attrs.items():
+            t.add_positive(k, v)
+        assert GraphMatcher.compute_alignment(self._node(attrs), t) == 1.0
 
     def test_contradiction(self):
         t = TargetFacts(); t.add_positive("color", "white")

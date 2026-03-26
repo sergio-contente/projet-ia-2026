@@ -14,6 +14,6 @@ kg:
 trigger:
   tau_stop: 0.6
   tau_skip: 0.0
-  max_interaction_rounds: 2
+  max_interaction_rounds: 3
 output_dir: ./results/vlmr1_kg
 seed: 42

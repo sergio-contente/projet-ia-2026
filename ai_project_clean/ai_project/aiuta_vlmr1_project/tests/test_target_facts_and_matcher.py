@@ -21,10 +21,13 @@ def test_parse_color_and_location():
 
 
 def test_explain_alignment():
+    attrs = {"color": "white", "material": "wood", "size": "small", "location": "bedroom", "near": "window"}
     n = ObjectNode(obj_id="o1", category="cabinet")
-    n.attributes["color"] = Attribute("color", "white", Certainty.MEDIUM)
+    for k, v in attrs.items():
+        n.attributes[k] = Attribute(k, v, Certainty.MEDIUM)
     t = TargetFacts()
-    t.add_positive("color", "white")
+    for k, v in attrs.items():
+        t.add_positive(k, v)
     exp = GraphMatcher.explain_alignment(n, t)
     assert exp["score"] == 1.0
-    assert len(exp["matched"]) >= 1
+    assert len(exp["matched"]) >= 5

@@ -114,6 +114,9 @@ def _negative_pair_result(obj_val: str, neg_val: str, loader: Any | None) -> str
     return "match" if o == n else "mismatch"
 
 
+MIN_RESOLVED_FOR_STOP = 2
+
+
 class GraphMatcher:
     @staticmethod
     def compute_alignment(
@@ -154,7 +157,18 @@ class GraphMatcher:
         resolved = matched + contradicted
         if resolved == 0:
             return -1.0
-        return matched / total
+        if resolved < MIN_RESOLVED_FOR_STOP:
+            print(
+                f"[GraphMatcher] alignment resolved={resolved} < MIN_RESOLVED={MIN_RESOLVED_FOR_STOP}, "
+                f"forcing ASK (matched={matched}, total={total})"
+            )
+            return -1.0
+        score = matched / resolved
+        print(
+            f"[GraphMatcher] alignment score={score:.2f} "
+            f"(matched={matched}, resolved={resolved}, total_target={total})"
+        )
+        return score
 
     @staticmethod
     def compute_alignment_with_vlm_fallback(
