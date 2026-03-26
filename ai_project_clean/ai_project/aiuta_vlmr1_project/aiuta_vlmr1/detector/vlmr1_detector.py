@@ -26,12 +26,33 @@ class VLMr1Detector(AbstractDetector):
     def _crop_for_bbox(observation: np.ndarray, bbox: list[float]) -> np.ndarray | None:
         h, w = observation.shape[:2]
         x1, y1, x2, y2 = bbox
+        print(f"[CROP_DEBUG] obs_size={w}x{h}, raw_bbox=[{x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f}]")
+
+        # Qwen2.5-VL may output coords in a 1000x1000 normalized grid
+        if max(x1, x2) <= 1000 and max(y1, y2) <= 1000 and (x2 > w or y2 > h):
+            print(f"[CROP_DEBUG] Detected 1000-grid coords — rescaling to {w}x{h}")
+            x1, y1 = x1 * w / 1000, y1 * h / 1000
+            x2, y2 = x2 * w / 1000, y2 * h / 1000
+
+        if x2 > w * 1.5 or y2 > h * 1.5:
+            print(
+                f"[CROP_DEBUG] bbox coords ({x2:.0f},{y2:.0f}) >> "
+                f"obs dims ({w},{h}) — likely WRONG SPACE"
+            )
+
         xi1 = max(0, min(w - 1, int(round(x1))))
         yi1 = max(0, min(h - 1, int(round(y1))))
         xi2 = max(0, min(w, int(round(x2))))
         yi2 = max(0, min(h, int(round(y2))))
+        crop_w, crop_h = xi2 - xi1, yi2 - yi1
+        print(f"[CROP_DEBUG] clipped=[{xi1},{yi1},{xi2},{yi2}], crop_size={crop_w}x{crop_h}")
+
         if xi2 <= xi1 or yi2 <= yi1:
+            print("[CROP_DEBUG] EMPTY CROP → returning None")
             return None
+
+        area_ratio = (crop_w * crop_h) / (w * h)
+        print(f"[CROP_DEBUG] crop OK, area_ratio={area_ratio:.2%}")
         return observation[yi1:yi2, xi1:xi2].copy()
 
     def _run_forward(
@@ -136,10 +157,19 @@ class VLMr1Detector(AbstractDetector):
                 },
             ]
             _, result = self._run_forward(messages)
+            crops_ok = 0
+            crops_fail = 0
             for d in result.detections:
                 crop = self._crop_for_bbox(observation, d.bbox)
                 if crop is not None:
                     d.image = crop
+                    crops_ok += 1
+                else:
+                    crops_fail += 1
+            print(
+                f"[DETECT_DEBUG] {len(result.detections)} detections, "
+                f"{crops_ok} crops OK, {crops_fail} crops FAILED"
+            )
             return result
         finally:
             if tmp_path is not None:

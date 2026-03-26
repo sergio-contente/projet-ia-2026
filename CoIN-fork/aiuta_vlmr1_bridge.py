@@ -42,6 +42,7 @@ class BridgeDetection:
     bbox_xyxy: list[float]  # [x1,y1,x2,y2] in pixel coords
     label: str
     reasoning: str | None = None
+    image: np.ndarray | None = None
 
 
 @dataclass
@@ -135,6 +136,7 @@ class VLMr1Bridge:
                     bbox_xyxy=list(map(float, d.bbox)),
                     label=str(d.label),
                     reasoning=d.reasoning,
+                    image=getattr(d, "image", None),
                 )
             )
         return BridgeDetectionResult(detections=dets, reasoning_text=res.reasoning_text)

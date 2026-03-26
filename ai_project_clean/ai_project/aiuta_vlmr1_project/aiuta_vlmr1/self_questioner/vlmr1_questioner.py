@@ -148,11 +148,27 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
         for rel in extraction.spatial_relations:
             kg.add_spatial_relation(node.obj_id, rel)
 
-        # Description pass: 1 VLM call for rich visual description
+        # Description pass: 1 VLM call on the CROP (not the full frame)
         obs = getattr(detection, "image", None)
+        obs_source = "CROP" if obs is not None else "NONE"
         if obs is None:
-            obs = getattr(self, "_current_observation", None)
-        description = self._describe_detection(obs, detection.label)
+            obs_source = "FULL_FRAME_FALLBACK"
+            print(
+                f"[QUESTIONER_DEBUG] No crop for {detection.label!r} "
+                f"bbox={detection.bbox} — skipping description pass"
+            )
+        else:
+            if isinstance(obs, np.ndarray):
+                print(
+                    f"[QUESTIONER_DEBUG] detection.label={detection.label!r}, "
+                    f"bbox={detection.bbox}, image_source={obs_source}, "
+                    f"crop_shape={obs.shape}"
+                )
+        description = (
+            self._describe_detection(obs, detection.label)
+            if obs_source == "CROP"
+            else None
+        )
 
         if description:
             features = extract_think_features(description, detection.label)
