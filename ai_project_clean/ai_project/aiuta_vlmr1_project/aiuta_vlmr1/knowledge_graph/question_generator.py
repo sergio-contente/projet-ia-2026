@@ -28,6 +28,51 @@ YESNO_TEMPLATES = {
 
 YESNO_CATCHALL = "Does the {category} have {value}?"
 
+COLOR_WORDS = frozenset({
+    "red", "blue", "green", "black", "white", "yellow", "brown", "gray", "grey",
+    "orange", "pink", "purple", "beige", "dark", "light", "tan", "cream",
+    "ivory", "maroon", "navy", "teal", "turquoise", "gold", "silver",
+})
+MATERIAL_WORDS = frozenset({
+    "wood", "wooden", "metal", "metallic", "glass", "plastic", "leather",
+    "fabric", "stone", "marble", "ceramic", "steel", "iron",
+    "upholstered", "velvet", "cotton", "linen", "wicker", "bamboo",
+})
+SIZE_WORDS = frozenset({
+    "large", "small", "medium", "big", "tiny", "huge", "compact",
+    "oversized", "tall", "short", "wide", "narrow",
+})
+
+
+def _infer_semantic_type(attr_name: str, value: str) -> str | None:
+    """Map a value to its canonical YESNO_TEMPLATES key."""
+    v = value.strip().lower()
+    if v in COLOR_WORDS:
+        return "color"
+    parts = v.split()
+    if len(parts) == 2 and parts[0] in ("light", "dark", "bright", "pale", "deep"):
+        if parts[1] in COLOR_WORDS or parts[1] in (
+            "brown", "blue", "green", "red", "gray", "grey", "pink", "yellow",
+        ):
+            return "color"
+    if v in MATERIAL_WORDS:
+        return "material"
+    if v in SIZE_WORDS:
+        return "size"
+    clean = attr_name.lower().replace("think_", "")
+    if clean in ("color", "colour"):
+        return "color"
+    if clean in ("material", "fabric", "texture"):
+        return "material"
+    if clean == "size":
+        return "size"
+    if clean in ("near", "next_to"):
+        return "near"
+    if clean in ("location", "room"):
+        return "location"
+    return None
+
+
 QUESTION_TEMPLATES = {
     "color": "What color is the {category}?",
     "material": "What material is the {category} made of?",
@@ -57,10 +102,16 @@ class QuestionGenerator:
         for attr_name, attr_obj in obj.attributes.items():
             if attr_name in known:
                 continue
-            real_name = attr_name
-            if real_name.startswith("think_"):
-                real_name = real_name[len("think_"):]
-            template = YESNO_TEMPLATES.get(real_name, YESNO_CATCHALL)
+            sem = _infer_semantic_type(attr_name, attr_obj.value)
+            if sem and sem in known:
+                continue
+            if sem and sem in YESNO_TEMPLATES:
+                template = YESNO_TEMPLATES[sem]
+            else:
+                real_name = attr_name
+                if real_name.startswith("think_"):
+                    real_name = real_name[len("think_"):]
+                template = YESNO_TEMPLATES.get(real_name, YESNO_CATCHALL)
             candidate = template.format(category=obj.category, value=attr_obj.value)
             if candidate not in asked:
                 return candidate

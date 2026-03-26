@@ -136,6 +136,12 @@ class GraphMatcher:
     ) -> float:
         if target.num_facts == 0:
             return -1.0
+        obj_attrs = {k: v.value for k, v in obj.attributes.items()} if obj.attributes else {}
+        print(
+            f"[GraphMatcher] Comparing target={dict(target.known_attributes)} "
+            f"neg={dict(target.negative_attributes)} "
+            f"vs obj={obj_attrs}"
+        )
         total = 0
         matched = 0
         contradicted = 0

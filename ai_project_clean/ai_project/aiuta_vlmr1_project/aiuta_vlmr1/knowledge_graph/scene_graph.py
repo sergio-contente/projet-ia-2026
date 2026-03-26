@@ -16,6 +16,39 @@ from .schema import (
     Certainty,
 )
 
+_COLOR_WORDS = frozenset({
+    "red", "blue", "green", "black", "white", "yellow", "brown", "gray", "grey",
+    "orange", "pink", "purple", "beige", "dark", "light", "tan", "cream",
+    "ivory", "maroon", "navy", "teal", "turquoise", "gold", "silver",
+})
+_MATERIAL_WORDS = frozenset({
+    "wood", "wooden", "metal", "metallic", "glass", "plastic", "leather",
+    "fabric", "stone", "marble", "ceramic", "steel", "iron",
+    "upholstered", "velvet", "cotton", "linen", "wicker", "bamboo",
+})
+_SIZE_WORDS = frozenset({
+    "large", "small", "medium", "big", "tiny", "huge", "compact",
+    "oversized", "tall", "short", "wide", "narrow",
+})
+
+
+def _classify_value_as_attribute(value: str) -> str | None:
+    """Map a value word to its canonical attribute name (color/material/size)."""
+    v = value.strip().lower()
+    if v in _COLOR_WORDS:
+        return "color"
+    parts = v.split()
+    if len(parts) == 2 and parts[0] in ("light", "dark", "bright", "pale", "deep"):
+        if parts[1] in _COLOR_WORDS or parts[1] in (
+            "brown", "blue", "green", "red", "gray", "grey", "pink", "yellow",
+        ):
+            return "color"
+    if v in _MATERIAL_WORDS:
+        return "material"
+    if v in _SIZE_WORDS:
+        return "size"
+    return None
+
 
 class SceneKnowledgeGraph:
     """
@@ -104,17 +137,88 @@ class SceneKnowledgeGraph:
         return iter(self._nodes.values())
 
     @staticmethod
+    def _parse_yesno_question(question: str) -> tuple[str, str] | None:
+        """Extract (attribute_name, attribute_value) from a yes/no question.
+
+        Returns None if the question is not a recognized yes/no pattern.
+        """
+        import re
+
+        q = question.strip().lower().rstrip("?").strip()
+
+        m = re.search(r"is the \w+ ([\w\s-]+?) in colou?r", q)
+        if m:
+            return ("color", m.group(1).strip())
+        m = re.search(r"is the .+ made of ([\w\s-]+?)(?:\s+(?:fabric|material))?\s*$", q)
+        if m:
+            return ("material", m.group(1).strip())
+        m = re.search(r"does the .+ have (?:a |an )?([\w\s-]+?) texture", q)
+        if m:
+            return ("texture", m.group(1).strip())
+        m = re.search(r"does the .+ have (?:a |an )?([\w\s-]+?) pattern", q)
+        if m:
+            return ("pattern", m.group(1).strip())
+        m = re.search(r"does the .+ have (?:a |an )?([\w\s-]+?) surface", q)
+        if m:
+            return ("surface", m.group(1).strip())
+        m = re.search(r"does the .+ have ([\w\s-]+?) handles", q)
+        if m:
+            return ("handles", m.group(1).strip())
+        m = re.search(r"is the .+ ([\w\s-]+?) in shape", q)
+        if m:
+            return ("shape", m.group(1).strip())
+        m = re.search(r"is the .+ near (?:a |an |the )?([\w\s-]+?)\s*$", q)
+        if m:
+            return ("near", m.group(1).strip())
+        m = re.search(r"is the .+ in the ([\w\s-]+?)\s*$", q)
+        if m:
+            return ("location", m.group(1).strip())
+        m = re.search(
+            r"does the .+ have (?:a |an )?(drawers?|wheels?|doors?|glass doors?|handles?)\s*$",
+            q,
+        )
+        if m:
+            feat = m.group(1).strip()
+            feat_s = feat.rstrip("s") if feat.endswith("s") and not feat.endswith("ss") else feat
+            return (f"has_{feat_s}", "yes")
+        m = re.search(r"is the .+ (open|closed)\s*$", q)
+        if m:
+            return ("is_open", m.group(1))
+        m = re.search(r"is the .+ (large|small|medium|big|tiny|huge)\s*$", q)
+        if m:
+            return ("size", m.group(1))
+        m = re.search(r"does the .+ have (?:a |an )?([\w\s-]+?)\s*$", q)
+        if m:
+            feat = m.group(1).strip()
+            canonical = _classify_value_as_attribute(feat)
+            if canonical is not None:
+                return (canonical, feat)
+            attr = re.sub(r"[^a-z0-9]+", "_", feat).strip("_")
+            return (f"think_{attr}", feat)
+        m = re.search(r"is the \w+ (\w+)\s*$", q)
+        if m and m.group(1) not in ("the", "a", "an", "this", "that", "it"):
+            adj = m.group(1)
+            canonical = _classify_value_as_attribute(adj)
+            if canonical is not None:
+                return (canonical, adj)
+            return ("user_stated", adj)
+        return None
+
+    @staticmethod
     def _infer_attribute_from_question(question: str) -> str | None:
         """Reverse-map a question to the attribute name it asks about."""
         import re
 
         q = question.strip().lower()
-        # Think feature: "Describe the {subject} of the {category}."
+
+        parsed = SceneKnowledgeGraph._parse_yesno_question(question)
+        if parsed is not None:
+            return parsed[0]
+
         m = re.search(r"describe the (\w+) of", q)
         if m:
             return f"think_{m.group(1)}"
 
-        # Standard template patterns
         patterns = [
             (r"what colou?r ", "color"),
             (r"what material ", "material"),
@@ -135,7 +239,6 @@ class SceneKnowledgeGraph:
                 m = re.search(pat, q)
                 if m:
                     return m.group(1)
-        # Fallback: "Does the X have a {feature}?"
         m = re.search(r"does the .+ have (?:a |an )?([\w\s]+?)\s*\??\s*$", q)
         if m:
             feat = m.group(1).strip()
@@ -162,14 +265,37 @@ class SceneKnowledgeGraph:
         self, user_response: str, timestep: int = 0, question: str | None = None,
     ) -> None:
         r_check = user_response.strip().lower().rstrip(".")
-        if r_check in ("i don't know", "i dont know", "unknown", "not sure"):
+        if r_check in ("i don't know", "i dont know", "unknown", "not sure", "?"):
             print(f"[KG] Skipping IDK response for question: {question!r}")
             return
 
+        src = f"user_t{timestep}"
+
+        # ── YES/NO PATH: value from QUESTION, polarity from RESPONSE ──
+        if question is not None:
+            parsed_yesno = self._parse_yesno_question(question)
+            if parsed_yesno is not None:
+                attr_name, attr_value = parsed_yesno
+                oracle_yes = r_check.startswith("yes")
+                oracle_no = r_check.startswith("no")
+                if oracle_yes:
+                    self.target_facts.add_positive(attr_name, attr_value, f"yesno_confirm|{src}")
+                    print(f"[KG] Target fact: {attr_name}={attr_value} (Oracle confirmed)")
+                elif oracle_no:
+                    self.target_facts.add_negative(attr_name, attr_value, f"yesno_deny|{src}")
+                    print(f"[KG] Target fact: NOT {attr_name}={attr_value} (Oracle denied)")
+                else:
+                    r_val = self._normalize_open_answer_value(user_response)
+                    if r_val and r_val not in ("i don't know", "i dont know", "unknown"):
+                        self.target_facts.add_positive(attr_name, r_val, f"yesno_open|{src}")
+                        print(f"[KG] Target fact: {attr_name}={r_val} (Oracle open answer)")
+                self.target_facts.record_question(question)
+                return
+
+        # ── OPEN-ENDED PATH: value from RESPONSE ──
         from .target_fact_parser import parse_user_response_to_facts
 
         facts = parse_user_response_to_facts(user_response)
-        src = f"user_t{timestep}"
         structured = [f for f in facts if f.provenance != "fallback"]
         if structured:
             for f in structured:
@@ -177,37 +303,38 @@ class SceneKnowledgeGraph:
                     self.target_facts.add_negative(f.attribute, f.value, f"{f.provenance}|{src}")
                 else:
                     self.target_facts.add_positive(f.attribute, f.value, f"{f.provenance}|{src}")
+            if question:
+                self.target_facts.record_question(question)
             return
 
-        # If we have the question context, infer the attribute directly
         if question is not None:
             attr = self._infer_attribute_from_question(question)
             if attr is not None:
                 r = self._normalize_open_answer_value(user_response)
                 if r and r not in ("i don't know", "i dont know", "unknown"):
-                    is_neg = r.startswith("no")
-                    if is_neg:
-                        self.target_facts.add_negative(attr, r.lstrip("no").strip(" ,"), f"question_attr|{src}")
-                    else:
-                        self.target_facts.add_positive(attr, r, f"question_attr|{src}")
+                    self.target_facts.add_positive(attr, r, f"question_attr|{src}")
+                    self.target_facts.record_question(question)
                     return
 
+        # ── FINAL FALLBACK ──
         r = user_response.strip().lower()
-        is_neg = any(r.startswith(p) for p in ("no", "not", "it is not", "it\'s not"))
+        is_neg = any(r.startswith(p) for p in ("no", "not", "it is not", "it's not"))
         if is_neg:
             clean = r
-            for prefix in ("no, ", "not ", "it is not ", "it\'s not "):
+            for prefix in ("no, ", "not ", "it is not ", "it's not "):
                 if clean.startswith(prefix):
                     clean = clean[len(prefix):]
                     break
             self.target_facts.add_negative("user_stated", clean, src)
         else:
             clean = r
-            for prefix in ("yes, ", "it is ", "it\'s ", "it has "):
+            for prefix in ("yes, ", "it is ", "it's ", "it has "):
                 if clean.startswith(prefix):
                     clean = clean[len(prefix):]
                     break
             self.target_facts.add_positive("user_stated", clean, src)
+        if question:
+            self.target_facts.record_question(question)
 
     def get_kg_context_string(self, category: str) -> str:
         instances = self.get_objects_by_category(category)
