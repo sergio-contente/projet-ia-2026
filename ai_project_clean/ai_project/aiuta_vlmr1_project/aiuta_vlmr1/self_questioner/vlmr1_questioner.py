@@ -9,6 +9,7 @@ from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
 from ..knowledge_graph.think_feature_extractor import (
     extract_think_features,
     feature_to_attribute_name,
+    feature_to_qualifier,
 )
 from ..knowledge_graph.triple_extractor import TripleExtractor
 from .base import AbstractSelfQuestioner, RefinedDescription
@@ -156,11 +157,17 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
         if description:
             features = extract_think_features(description, detection.label)
             if features:
+                from ..knowledge_graph.scene_graph import SceneKnowledgeGraph
+
                 for feat in features:
                     attr_name = feature_to_attribute_name(feat)
+                    qualifier = feature_to_qualifier(feat)
+                    qualifier = SceneKnowledgeGraph._normalize_open_answer_value(
+                        qualifier
+                    )
                     attr = Attribute(
                         name=attr_name,
-                        value="yes",
+                        value=qualifier,
                         certainty=Certainty.MEDIUM,
                         source=AttributeSource.VLM_REASONING,
                         timestep=timestep,

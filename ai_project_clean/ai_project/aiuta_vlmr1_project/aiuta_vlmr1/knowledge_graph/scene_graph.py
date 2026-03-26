@@ -109,6 +109,27 @@ class SceneKnowledgeGraph:
         import re
 
         q = question.strip().lower()
+        # Think-feature open-ended patterns (priority — before generic templates)
+        m = re.search(r"what colou?r is the (\w+) on", q)
+        if m:
+            return f"think_{m.group(1)}"
+        m = re.search(r"what material is the (\w+) on", q)
+        if m:
+            return f"think_{m.group(1)}"
+        m = re.search(r"what pattern does the (\w+) on", q)
+        if m:
+            return f"think_{m.group(1)}"
+        m = re.search(r"what texture does the (\w+) on", q)
+        if m:
+            return f"think_{m.group(1)}"
+        m = re.search(r"is the (\w+) on the .+ large or small", q)
+        if m:
+            return f"think_{m.group(1)}"
+        m = re.search(r"describe the (\w+) on", q)
+        if m:
+            return f"think_{m.group(1)}"
+
+        # Standard template patterns
         patterns = [
             (r"what colou?r ", "color"),
             (r"what material ", "material"),
@@ -129,12 +150,18 @@ class SceneKnowledgeGraph:
                 m = re.search(pat, q)
                 if m:
                     return m.group(1)
-        # Think-feature questions: "Does the X have a {feature}?"
+        # Fallback: "Does the X have a {feature}?"
         m = re.search(r"does the .+ have (?:a |an )?([\w\s]+?)\s*\??\s*$", q)
         if m:
             feat = m.group(1).strip()
             return f"think_{re.sub(r'[^a-z0-9]+', '_', feat).strip('_')}"
         return None
+
+    _SYNONYMS: dict[str, str] = {
+        "wooden": "wood", "metallic": "metal", "grey": "gray",
+        "leather-like": "leather", "dark-colored": "dark",
+        "light-colored": "light",
+    }
 
     @staticmethod
     def _normalize_open_answer_value(text: str) -> str:
@@ -143,11 +170,17 @@ class SceneKnowledgeGraph:
         for prefix in ("it's ", "it is ", "its ", "the ", "a ", "an "):
             if r.startswith(prefix):
                 r = r[len(prefix) :].strip()
+        r = SceneKnowledgeGraph._SYNONYMS.get(r, r)
         return r
 
     def update_target_facts(
         self, user_response: str, timestep: int = 0, question: str | None = None,
     ) -> None:
+        r_check = user_response.strip().lower().rstrip(".")
+        if r_check in ("i don't know", "i dont know", "unknown", "not sure"):
+            print(f"[KG] Skipping IDK response for question: {question!r}")
+            return
+
         from .target_fact_parser import parse_user_response_to_facts
 
         facts = parse_user_response_to_facts(user_response)
