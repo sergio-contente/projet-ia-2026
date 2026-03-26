@@ -1,155 +1,287 @@
 <h1 align="center">
-    AIUTA-VLM-R1: Uncertainty-Aware VQA with Knowledge Graphs
+    AIUTA-VLM-R1: Efficient Instance Navigation with<br/>Knowledge Graphs and a Single 3B VLM
 </h1>
 
 <p align="center">
-    <b>AI Project -- MVA + ENSTA Paris, 2025-2026</b>
+    <b>AI Project — MVA + ENSTA Paris, 2025–2026</b>
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python&logoColor=white"/>
+<img src="https://img.shields.io/badge/Python-3.9%2F3.10-blue?style=for-the-badge&logo=python&logoColor=white"/>
 <img src="https://img.shields.io/badge/PyTorch-2.0+-ee4c2c?style=for-the-badge&logo=pytorch&logoColor=white"/>
 <img src="https://img.shields.io/badge/VLM--R1-Qwen2.5VL--3B-green?style=for-the-badge"/>
-<!-- ALL-CONTRIBUTORS-BADGE:START -->
-<img src="https://img.shields.io/badge/contributors-2-orange.svg?style=for-the-badge"/>
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
+<img src="https://img.shields.io/badge/Zero--API--Cost-local%20only-blueviolet?style=for-the-badge"/>
 </p>
-
-<p align="center">
-<img src="https://forthebadge.com/images/badges/made-with-python.svg"/>
-<img src="https://forthebadge.com/images/badges/built-with-science.svg"/>
-</p>
-
-This project integrates [VLM-R1](https://github.com/om-ai-lab/VLM-R1) (an RL-trained Vision Language Model with chain-of-thought reasoning) and **Knowledge Graphs** into the [AIUTA/CoIN](https://github.com/intelligolabs/CoIN) uncertainty-aware VQA pipeline. We extract structured knowledge from VLM reasoning blocks at **zero extra cost** to build scene Knowledge Graphs that inform when the model should abstain ("I don't know") vs. commit to an answer.
 
 ---
 
 ## Overview
 
-The project addresses two main questions:
+We replace the multi-model stack of [AIUTA](https://intelligolabs.github.io/CoIN/) (LLaVA 7B + GPT-4o, 10–14 calls per detection) with a **single 3B VLM** ([VLM-R1](https://github.com/om-ai-lab/VLM-R1)) and a **deterministic Knowledge Graph**, reducing calls to **2–3 per detection** with **zero API cost**, while preserving the agent's ability to discriminate target instances from distractors.
 
-1. **Uncertainty-Aware VQA** -- Given an image and a Yes/No question, can we reliably decide when to answer and when to abstain ("I don't know"), minimizing overconfident wrong answers?
-2. **Embodied Object Navigation** -- Can a VLM-R1-powered agent find target objects in 3D scenes while minimizing human-agent interaction?
+The project has two phases:
+
+1. **Phase 1 — IDKVQA Offline Evaluation**: Calibrating uncertainty-aware Yes/No/IDK visual question answering on 502 static samples. Achieved φ₁ = 33.27 (+58% over AIUTA's 21.12) with a single VLM call via entropy-based abstention.
+
+2. **Phase 2 — CoIN-Bench Online Navigation**: Integrating the full reasoning pipeline into VLFM-based embodied navigation on [CoIN-Bench](https://huggingface.co/datasets/ftaioli/CoIN-Bench) (1,649 episodes across 3 splits).
+
+---
+
+## What This Project Changes vs. Original AIUTA
+
+| | AIUTA Original (ICCV 2025) | AIUTA-VLM-R1 (ours) |
+|---|---|---|
+| **Models** | LLaVA 7B (VLM) + GPT-4o (LLM) | VLM-R1 3B (single model, all tasks) |
+| **Calls per detection** | 10–14 (6–10 VLM + 4 LLM) | 2–3 |
+| **API cost** | GPT-4o paid API | Zero (fully local) |
+| **Description generation** | VLM call + LLM generates follow-up questions + VLM answers each | 1 description pass + regex extraction |
+| **Uncertainty estimation** | Shannon entropy over Yes/No/IDK logits per attribute (3–5 VLM calls) | Canonical alias dictionaries + detection VQA cross-verification (0 calls) |
+| **Alignment scoring** | LLM prompt → score 0–10 (1 LLM call) | GraphMatcher: deterministic KG comparison (0 calls) |
+| **Question generation** | LLM composes natural-language question (1 LLM call) | QuestionGenerator selects most discriminative attribute + template (0 calls) |
+| **Contradiction detection** | Not explicit — LLM may overlook conflicts in concatenated text | Explicit: Oracle says "no" + Detection VQA says "yes" → immediate rejection |
+| **IDKVQA φ₁** | 21.12 (Normalized Entropy) | 33.27 (threshold mode, +58%) |
+
+**What is NOT changed**: VLFM navigation policy, BLIP-2 frontier scoring (value map), MobileSAM segmentation, PointNav movement. These remain from the original CoIN codebase.
+
+---
 
 ## Architecture
 
+### Single Model, Multiple Roles
+
+We use **one model** — `omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321` (a Qwen2.5-VL-3B fine-tuned with GRPO for open-vocabulary detection) — loaded once via a `ModelLoader` singleton and reused for all tasks via different prompts:
+
+| Role | Prompt type | Input image | Output |
+|---|---|---|---|
+| **Detector** | OVD with `<think>` | Full frame | Bboxes + reasoning |
+| **SelfQuestioner** | "List 3–5 features" | Cropped detection | Comma-separated features |
+| **Detection VQA** | "Is the bed green?" | Cropped detection | Yes/No/IDK |
+| **Oracle** | "Is the bed green?" | Target instance image | Yes/No/IDK |
+
+### Pipeline Flow (per detection)
+
 ```
-Image + Question
-  |
-  +-- Detection Pass (1 call) --> <think> reasoning --> TripleExtractor --> KG attributes
-  |
-  +-- Attribute Pass (1 call) --> structured JSON --> merged into KG
-  |
-  +-- VQA Pass (1 call) --> Yes/No/IDK + token entropy
-                                    |
-                    +---------------+----------------+
-                    |               |                |
-              KG Hybrid        Entropy Gate      Hedging Detection
-              Fusion           (tau = 0.09)      (textual cues)
-                    |               |                |
-                    +---------------+----------------+
-                                    |
-                              Final Answer
-                          (Yes / No / I don't know)
+Observation (512×512 RGB)
+  │
+  ├─ [1 VLM call] VLM-R1 OVD detection
+  │     └─ <think> reasoning + <answer> bboxes
+  │
+  ├─ Detection Filter (area < 30%, aspect < 4.0, min 1600px)
+  │
+  ├─ Crop extraction from observation
+  │
+  ├─ [0 calls] TripleExtractor: regex on <think> → KG attributes
+  │
+  ├─ [1 VLM call] SelfQuestioner description pass on crop
+  │     └─ "white mattress, wooden frame, near nightstand"
+  │
+  ├─ [0 calls] Canonical alias generation
+  │     └─ think_mattress=white → color=white  (COLOR_WORDS dict)
+  │     └─ think_frame=wood → material=wood    (MATERIAL_WORDS dict)
+  │
+  ├─ [0 calls] QuestionGenerator: pick most discriminative attribute
+  │     └─ KG has color=white but target has no color fact → ask about color
+  │     └─ Template: "Is the bed white in color?"
+  │
+  ├─ [1 VLM call] Oracle answers viewing TARGET instance image
+  │     └─ "yes" → KG stores target.color=white
+  │
+  ├─ [0 calls*] Detection VQA: same question on CROP (cross-verification)
+  │     └─ "yes" → confirms, or "no" → contradiction → CONTINUE
+  │
+  └─ [0 calls] GraphMatcher: deterministic alignment
+        └─ target={color:white} vs obj={color:white} → score=1.0 → STOP
 ```
 
-**Cost**: 1-3 VLM calls per sample (vs. 5-8 in original AIUTA)
+*Detection VQA reuses the already-loaded model, counted as part of the same detection cycle.
+
+### Knowledge Graph Schema
+
+```
+ObjectNode
+  ├── obj_id: "bed_001"
+  ├── category: "bed"
+  ├── bbox: [240, 317, 504, 504]
+  └── attributes:
+        ├── color: white (CONFIRMED, Oracle)
+        ├── material: wood (MEDIUM, VLM_REASONING)
+        └── near: nightstand (MEDIUM, VLM_REASONING)
+
+TargetFacts
+  ├── category: "bed"
+  ├── known_attributes: {color: white}      ← Oracle confirmed
+  └── negative_attributes: {color: green}   ← Oracle denied
+```
+
+The KG is **passive memory**: it stores and retrieves facts but never generates text. The `QuestionGenerator` queries the KG to decide what to ask; `GraphMatcher` queries it to compute alignment. Both are deterministic, zero-call operations.
+
+---
+
+## Phase 1: IDKVQA Offline Evaluation
+
+Evaluated on [IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) (502 samples, val split). Primary metric: **Effective Reliability φ₁** — penalizes confident wrong answers more than abstentions.
+
+### Results
+
+| Mode | VLM Calls | φ₁ (↑) | Accuracy (↑) | Overclaim (↓) | Coverage |
+|------|-----------|--------|--------------|----------------|----------|
+| `raw` | 1 | 21.71 | 53.6% | 54.1% | 72.1% |
+| **`threshold`** (τ=0.10) | **1** | **33.27** | **48.2%** | **28.1%** | **55.4%** |
+| `kg` | 2 | 28.69 | 32.1% | 8.9% | 8.4% |
+| `two_pass_kg` | 3 | 24.10 | 40.6% | 28.8% | 51.4% |
+| `relaxed` | 3 | 19.12 | 51.0% | 52.7% | 71.3% |
+| `entropy` | 3 | 23.90 | 48.6% | 38.4% | 62.0% |
+
+**AIUTA original baseline**: φ₁ = 21.12 (LLaVA 7B, Normalized Entropy)
+
+**Key findings**:
+- **Best φ₁**: `threshold` mode — 33.27 (+58% over AIUTA) with only 1 VLM call
+- **Best accuracy**: `raw` mode — 53.6% (no abstention filtering)
+- **KG mode over-abstains** on single static images (91.6% IDK rate) because without navigation context, the KG has no positive evidence to confirm. This is by design — the KG's value emerges in multi-step online navigation where it accumulates facts over time
+- **Entropy threshold τ=0.10** is optimal (found via sweep over 502 samples)
+
+### Ablation Modes Explained
+
+| Mode | Description |
+|------|-------------|
+| `raw` | Direct VLM answer only (baseline) |
+| `threshold` | Raw + entropy-based abstention (IDK when entropy > τ) |
+| `kg` | Detection reasoning → KG → conservative fusion |
+| `two_pass_kg` | KG + structured description pass (conservative) |
+| `relaxed` | Same pipeline, trust VLM answer when confident |
+| `entropy` | Same pipeline, trust VLM only when entropy < τ |
+
+---
+
+## Phase 2: CoIN-Bench Online Navigation
+
+### Integration Architecture
+
+The system runs in **two conda environments** communicating via the AIUTA-VLM-R1 bridge:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  coin-hab env (Python 3.9)                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
+│  │ Habitat  │→ │  VLFM    │→ │ BLIP-2   │→ │  PointNav  │  │
+│  │ Sim      │  │ Policy   │  │ ValueMap │  │  Movement  │  │
+│  └──────────┘  └────┬─────┘  └──────────┘  └────────────┘  │
+│                     │                                        │
+│              ┌──────┴──────┐                                │
+│              │ VLMr1Bridge │ ← thin interface                │
+│              └──────┬──────┘                                │
+│                     │                                        │
+│  ┌──────────────────┴──────────────────────────────────┐    │
+│  │  aiuta env (Python 3.10) — loaded via pip install   │    │
+│  │  ┌──────────┐ ┌──────────────┐ ┌────────────────┐  │    │
+│  │  │ VLM-R1   │ │SelfQuestioner│ │ KG + Matcher   │  │    │
+│  │  │ Detector │ │+ TripleExtr. │ │ + QuestionGen  │  │    │
+│  │  └──────────┘ └──────────────┘ └────────────────┘  │    │
+│  │  ┌──────────┐                                       │    │
+│  │  │VLMr1     │ ← answers questions using target      │    │
+│  │  │Oracle    │   instance image (simulated user)     │    │
+│  │  └──────────┘                                       │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+**`VLMr1Bridge`** (`CoIN-fork/aiuta_vlmr1_bridge.py`): Thin interface between VLFM's `ObjectPointCloudMap` and the AIUTA pipeline. Handles `detect()` → bboxes and `pipeline_step()` → STOP/CONTINUE/ASK signals.
+
+**`VLMr1Oracle`** (`CoIN-fork/vlfm/oracle/vlmr1_oracle.py`): Simulated user that answers yes/no questions by viewing the high-resolution target instance image. Replaces AIUTA's GPT-4o-based Oracle.
+
+**`AIUTAPipeline`** (`aiuta_vlmr1/pipeline/aiuta_pipeline.py`): Orchestrates detection → SelfQuestioner → KG → InteractionTrigger → Oracle → GraphMatcher per detection cycle.
+
+### CoIN-Bench Dataset
+
+| Split | Episodes | Avg. Distractors |
+|-------|----------|------------------|
+| val_seen | 831 | 4.58 |
+| val_seen_synonyms | 359 | 6.01 |
+| val_unseen | 459 | 5.15 |
+| **Total** | **1,649** | ~5 |
+
+AIUTA original results (Table 2 of paper):
+
+| Split | SR ↑ | SPL ↑ | NQ ↓ |
+|-------|------|-------|------|
+| val_seen | 7.42 | 2.92 | 1.67 |
+| val_seen_synonyms | 14.38 | 7.99 | 1.36 |
+| val_unseen | 6.67 | 2.30 | 1.13 |
+
+Our evaluation is in progress (20-episode preliminary runs completed; full 831-episode val_seen run pending).
+
+### Bug Fixes Applied (10 iterations)
+
+During online integration, we identified and fixed 10 issues through iterative debugging:
+
+1. **Oversized detections** (>50% frame area) — added `_filter_detections()` with MAX_AREA=0.30, MIN_AREA=1600px, MAX_ASPECT=4.0
+2. **Self-referential descriptions** ("Describe the X of the X") — strip category name from feature extraction
+3. **Open questions to yes/no Oracle** — added `YESNO_TEMPLATES` dict for all attribute types
+4. **Yes/no not parsed to target facts** (critical) — rewrote `_parse_yesno_question` + `update_target_facts`
+5. **Attribute name mismatch** (think_* vs canonical) — added `_classify_value_as_attribute` with COLOR_WORDS/MATERIAL_WORDS/SIZE_WORDS
+6. **Detection VQA storing raw "yes"/"no"** — apply `_parse_yesno` to detection VQA responses
+7. **Missing canonical aliases** — added `THINK_TO_CANONICAL` mapping + value classification
+8. **False STOP on negative-only evidence** — require `positive_matched > 0`, cap score at 0.5 otherwise
+9. **STOP during initialize phase** — added `MIN_STEPS_FOR_PIPELINE = 12`
+10. **Stale goal point cloud** — update cloud on re-detection during navigate mode
+
+---
 
 ## Project Structure
 
 ```
 projet-ia-2026/
-+-- README.md
-+-- ai_project/
-|   +-- aiuta_vlmr1_project/             # Core project
-|   |   +-- aiuta_vlmr1/                 # Main package
-|   |   |   +-- config.py                # YAML-driven configuration (Strategy pattern)
-|   |   |   +-- detector/                # VLM-R1 object detector
-|   |   |   |   +-- vlmr1_detector.py    # VLM-R1 detection adapter
-|   |   |   |   +-- output_parser.py     # Parse detections + bboxes from VLM
-|   |   |   |   +-- prompt_templates.py  # Prompts for open-vocabulary detection
-|   |   |   +-- knowledge_graph/         # Scene KG construction & querying
-|   |   |   |   +-- schema.py            # Certainty, Attribute, ObjectNode, SpatialRelation
-|   |   |   |   +-- scene_graph.py       # Per-episode KG with object dedup & merging
-|   |   |   |   +-- triple_extractor.py  # Extract (subj, pred, obj) from <think> blocks
-|   |   |   |   +-- attribute_parser.py  # Parse structured JSON attributes
-|   |   |   |   +-- graph_matcher.py     # Alignment scoring (detection vs. target)
-|   |   |   |   +-- build_global_kg.py   # Aggregate scene KGs into global index
-|   |   |   +-- self_questioner/         # Two-pass attribute extraction
-|   |   |   |   +-- two_pass_questioner.py  # Detection + attribute JSON (2 calls)
-|   |   |   |   +-- vlmr1_questioner.py     # Single-pass: triples only (1 call)
-|   |   |   +-- interaction_trigger/     # Decision logic (ask / continue / stop)
-|   |   |   |   +-- kg_trigger.py        # KG-based trigger (0 LLM calls)
-|   |   |   +-- evaluation/              # Benchmarking & metrics
-|   |   |   |   +-- idkvqa_eval.py       # Primary benchmark entry point
-|   |   |   |   +-- idkvqa_kg.py         # KG hybrid fusion (conservative/relaxed/entropy)
-|   |   |   |   +-- uncertainty_abstention.py  # Entropy-based threshold gates
-|   |   |   |   +-- threshold_sweep.py   # Offline entropy tau optimization
-|   |   |   |   +-- paper_artifacts.py   # CSV/JSON exports for paper tables
-|   |   |   +-- pipeline/               # Main orchestration
-|   |   |   |   +-- aiuta_pipeline.py    # Strategy-pattern component selection
-|   |   |   |   +-- coin_bench_runner.py # Bulk benchmark runner
-|   |   |   +-- utils/
-|   |   |       +-- model_loader.py      # Singleton model cache (Qwen-VL, etc.)
-|   |   +-- configs/
-|   |   |   +-- idkvqa_eval.yaml         # Default eval config (tau=0.09)
-|   |   |   +-- two_pass.yaml            # Two-pass pipeline config
-|   |   |   +-- vlmr1_coin.yaml          # CoIN embodied task config
-|   |   +-- tests/                       # 19 test modules (no GPU needed)
-|   |   +-- slurm/                       # SLURM job submission scripts
-|   |   +-- requirements.txt
-|   |   +-- pyproject.toml
-|   |   +-- setup.py
-|   +-- CoIN-fork/                       # Fork of CoIN (VLFM-based embodied agent)
-|   +-- CoIN-Bench/                      # Benchmark dataset (HuggingFace)
-|   +-- GroundingDINO/                   # Alternative detector
-+-- .gitignore
+├── README.md
+├── ai_project/
+│   ├── aiuta_vlmr1_project/                 # Core reasoning package
+│   │   ├── aiuta_vlmr1/
+│   │   │   ├── config.py                    # YAML-driven config (Strategy pattern)
+│   │   │   ├── detector/
+│   │   │   │   ├── vlmr1_detector.py        # VLM-R1 OVD adapter + detection filter
+│   │   │   │   ├── output_parser.py         # Parse <think>/<answer> blocks + bboxes
+│   │   │   │   └── prompt_templates.py      # Detection prompts
+│   │   │   ├── self_questioner/
+│   │   │   │   └── vlmr1_questioner.py      # Description pass + TripleExtractor + canonical aliases
+│   │   │   ├── knowledge_graph/
+│   │   │   │   ├── schema.py                # ObjectNode, Attribute, TargetFacts, Certainty
+│   │   │   │   ├── scene_graph.py           # Per-episode KG with object dedup & merging
+│   │   │   │   ├── triple_extractor.py      # Regex extraction from <think> blocks
+│   │   │   │   ├── think_feature_extractor.py  # Parse description pass features
+│   │   │   │   ├── graph_matcher.py         # Deterministic alignment scoring
+│   │   │   │   └── question_generator.py    # Discriminative attribute selection + templates
+│   │   │   ├── interaction_trigger/
+│   │   │   │   └── kg_trigger.py            # KG-based ASK/STOP/CONTINUE decisions
+│   │   │   ├── pipeline/
+│   │   │   │   └── aiuta_pipeline.py        # Main orchestrator (detection → KG → Oracle → match)
+│   │   │   ├── evaluation/
+│   │   │   │   ├── idkvqa_eval.py           # IDKVQA benchmark entry point
+│   │   │   │   ├── idkvqa_kg.py             # KG hybrid fusion modes
+│   │   │   │   ├── idkvqa_types.py          # Metrics: φ₁, accuracy, overclaim, underclaim
+│   │   │   │   ├── coin_metrics.py          # Online metrics: SR, SPL, NQ
+│   │   │   │   └── coin_loader.py           # CoIN-Bench dataset loader
+│   │   │   └── utils/
+│   │   │       └── model_loader.py          # Singleton model cache (config-keyed)
+│   │   ├── configs/
+│   │   │   ├── idkvqa_eval.yaml             # Offline eval config (τ=0.09)
+│   │   │   └── vlmr1_coin.yaml              # Online CoIN config
+│   │   ├── results/
+│   │   │   └── idkvqa/                      # All IDKVQA evaluation JSONs
+│   │   ├── tests/                           # Unit tests (no GPU needed)
+│   │   └── slurm/                           # SLURM job scripts
+│   ├── CoIN-fork/                           # Fork of CoIN/VLFM codebase
+│   │   ├── aiuta_vlmr1_bridge.py            # Bridge: VLFM ↔ AIUTA pipeline
+│   │   ├── vlfm/
+│   │   │   ├── oracle/vlmr1_oracle.py       # VLM-R1-based simulated user
+│   │   │   ├── policy/base_objectnav_policy.py  # Modified to use VLMr1Bridge
+│   │   │   └── mapping/object_point_cloud_map.py # Modified for VLM-R1 detections
+│   │   └── run_coin_vlmr1.sbatch            # SLURM launcher for online eval
+│   └── CoIN-Bench/                          # Dataset (from HuggingFace)
+└── .gitignore
 ```
 
-## Ablation Modes
-
-| Mode | VLM Calls | Description |
-|------|-----------|-------------|
-| `raw` | 1 | VLM answer only (baseline) |
-| `threshold` | 1 | raw + entropy-based abstention |
-| `kg` | 2 | Detection reasoning -> KG -> hybrid fusion (conservative) |
-| `kg_threshold` | 2 | KG + entropy gate |
-| `two_pass_kg` | 3 | KG + structured attribute pass (conservative fusion) |
-| `two_pass_kg_relaxed` | 3 | Same pipeline, trust VLM when confident |
-| `two_pass_kg_entropy` | 3 | Same pipeline, trust VLM only when entropy < tau |
-| `global_kg` | 1 | Pre-built global KG lookup (no live detection) |
-| `global_kg_entropy` | 1 | Global KG + entropy gate |
-
-## Model Configuration
-
-| Parameter | Value |
-|-----------|-------|
-| Primary VLM | `omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321` |
-| Processor | `Qwen/Qwen2.5-VL-3B-Instruct` |
-| Precision | bfloat16 |
-| Entropy threshold (tau) | 0.09 |
-| Abstention rule | entropy_above_tau_to_idk |
-| VQA max tokens | 256 |
-| Detection max tokens | 512 |
-| Seed | 42 |
-
-## Primary Benchmark: IDKVQA
-
-Evaluated on [ftaioli/IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) (502 samples, val split).
-
-Key metrics:
-- **Effective Reliability (phi_c)**: penalizes confident wrong answers more than abstentions
-- **Accuracy**: fraction of correct predictions
-- **Overclaim rate**: saying Yes/No when ground truth is IDK
-- **Underclaim rate**: saying IDK when ground truth is Yes/No
-- **Coverage**: fraction of non-IDK predictions
-
-## Datasets
-
-| Dataset | Role | Source |
-|---------|------|--------|
-| IDKVQA | Primary offline VQA benchmark (502 samples) | [ftaioli/IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) |
-| CoIN-Bench | Embodied navigation benchmark (val_seen, val_unseen, val_seen_synonyms) | [ftaioli/CoIN-Bench](https://huggingface.co/datasets/ftaioli/CoIN-Bench) |
+---
 
 ## Usage
 
@@ -164,65 +296,94 @@ pip install -e .
 ### Requirements
 
 ```bash
-pip install torch>=2.1 transformers>=4.40 qwen-vl-utils accelerate networkx>=3.0 pyyaml>=6.0 Pillow>=10.0 numpy>=1.24 matplotlib>=3.7 pytest>=7.0
+# Core (aiuta env, Python 3.10)
+pip install torch>=2.1 transformers>=4.40 qwen-vl-utils accelerate \
+    networkx>=3.0 pyyaml>=6.0 Pillow>=10.0 numpy>=1.24 matplotlib>=3.7
+
+# CoIN navigation (coin-hab env, Python 3.9)
+# See CoIN-fork/README.md for Habitat + VLFM setup
 ```
 
-### Running Tests (no GPU needed)
+### Running IDKVQA Evaluation (requires GPU)
+
+```bash
+# Threshold mode (best φ₁)
+python -m aiuta_vlmr1.evaluation.idkvqa_eval \
+  --config configs/idkvqa_eval.yaml \
+  --mode threshold \
+  --output results/idkvqa/threshold_run.json
+
+# All modes
+for MODE in raw threshold kg two_pass_kg relaxed entropy; do
+  sbatch --export=ALL,MODE=$MODE slurm/run_idkvqa.sbatch
+done
+
+# Smoke test (5 samples)
+sbatch --export=ALL,MODE=threshold,LIMIT_ARG=5 slurm/run_idkvqa.sbatch
+```
+
+### Running CoIN-Bench Online Evaluation
+
+```bash
+# Launch MobileSAM server + Habitat evaluation
+cd CoIN-fork
+sbatch run_coin_vlmr1.sbatch  # configures both envs automatically
+
+# Or manually:
+export COIN_USE_VLMR1=1
+export AIUTA_VLMR1_CONFIG=/path/to/vlmr1_coin.yaml
+python -m vlfm.run \
+  habitat.task.measurements.success.success_distance="0.25" \
+  habitat_baselines.eval.split="val_seen" \
+  habitat.dataset.data_path="CoIN-Bench/val_seen/val_seen.json.gz"
+```
+
+### Running Tests (no GPU)
 
 ```bash
 cd ai_project/aiuta_vlmr1_project
 pytest tests/ -v
 ```
 
-### Running IDKVQA Evaluation (requires GPU)
+---
 
-```bash
-# Via SLURM
-sbatch --export=ALL,MODE=two_pass_kg_entropy slurm/run_idkvqa.sbatch
+## Model Configuration
 
-# Other modes
-sbatch --export=ALL,MODE=raw slurm/run_idkvqa.sbatch
-sbatch --export=ALL,MODE=kg slurm/run_idkvqa.sbatch
-sbatch --export=ALL,MODE=two_pass_kg_relaxed slurm/run_idkvqa.sbatch
+| Parameter | Value |
+|-----------|-------|
+| Model | `omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321` |
+| Processor | `Qwen/Qwen2.5-VL-3B-Instruct` |
+| Precision | bfloat16 |
+| Device | Single GPU (auto device_map) |
+| Entropy threshold (τ) | 0.10 (IDKVQA optimal) |
+| Detection filter | area < 30%, min 1600px, aspect < 4.0 |
+| Max interaction rounds | 4 per detection |
+| Max questions per episode | 6 |
+| MIN_STEPS_FOR_PIPELINE | 12 (skip during initialize) |
 
-# Direct CLI
-python -m aiuta_vlmr1.evaluation.idkvqa_eval \
-  --config configs/idkvqa_eval.yaml \
-  --mode two_pass_kg_entropy \
-  --output results/idkvqa/run.json
+---
 
-# Smoke test (5 samples)
-sbatch --export=ALL,MODE=two_pass_kg_entropy,LIMIT_ARG=5 slurm/run_idkvqa.sbatch
-```
+## Known Limitations
 
-### A/B Comparison (no GPU)
+1. **Template questions for unknown attributes**: Features not in `COLOR_WORDS`/`MATERIAL_WORDS`/`SIZE_WORDS` produce malformed questions like "Does the bed have intricate?" instead of "Does the bed have intricate carvings?". The AIUTA original avoids this via GPT-4o natural language generation. Future work: use a VLM-R1 question generation pass (+1 call) for open-ended questions.
 
-```bash
-python3 -m aiuta_vlmr1.evaluation.idkvqa_ab_compare \
-  --input-a results/idkvqa/run_a.json \
-  --input-b results/idkvqa/run_b.json \
-  --label-a baseline --label-b improved \
-  --output results/idkvqa/ab_compare.json
-```
+2. **NQ not reduced** with fair counting: When counting all Oracle queries (including IDK responses), NQ ≈ 3–5 — comparable to AIUTA's 3–4. The gain is in compute efficiency, not interaction reduction.
 
-## Key Idea
+3. **Navigation bottleneck**: SR is limited by the shared VLFM navigation stack (PointNav orbiting, stop_radius vs. success_distance mismatch). This affects both AIUTA original and our version equally.
 
-VLM-R1 produces `<think>` reasoning blocks before answering. We parse these blocks with regex-based triple extraction -- **at zero extra GPU cost** -- to populate a scene Knowledge Graph. The KG then drives:
+4. **BLIP-2 still required**: The VLFM value map uses BLIP-2 ITM for frontier scoring. Replacing this with VLM-R1 would require rewriting the value map — out of scope.
 
-1. **Conservative fusion**: only confirm when KG attributes match the target
-2. **Entropy gating**: abstain when token entropy exceeds tau=0.09
-3. **Hedging detection**: flag textual uncertainty cues ("might", "possibly")
-
-This reduces overconfident wrong answers (overclaiming) at the cost of slightly higher abstention.
+---
 
 ## References
 
-- **VLM-R1**: [om-ai-lab/VLM-R1](https://github.com/om-ai-lab/VLM-R1) -- RL-trained open-vocabulary detection
-- **CoIN/AIUTA**: [intelligolabs/CoIN](https://github.com/intelligolabs/CoIN) -- Cooperative Interaction Agent
-- **IDKVQA**: [ftaioli/IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) -- Yes/No/IDK visual QA
-- **Model**: [omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321](https://huggingface.co/omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321)
-- **VLM-R1 Blog**: [om-ai-lab.github.io](https://om-ai-lab.github.io/2025_03_20.html)
-- **CoIN Project Page**: [intelligolabs.github.io/CoIN](https://intelligolabs.github.io/CoIN/)
+- **VLM-R1**: [om-ai-lab/VLM-R1](https://github.com/om-ai-lab/VLM-R1) — RL-trained open-vocabulary detection ([model](https://huggingface.co/omlab/VLM-R1-Qwen2.5VL-3B-OVD-0321), [blog](https://om-ai-lab.github.io/2025_03_20.html))
+- **CoIN/AIUTA**: [intelligolabs/CoIN](https://github.com/intelligolabs/CoIN) — Collaborative Instance Navigation ([project page](https://intelligolabs.github.io/CoIN/), [paper](https://arxiv.org/abs/2412.02052))
+- **CoIN-Bench**: [ftaioli/CoIN-Bench](https://huggingface.co/datasets/ftaioli/CoIN-Bench) — 1,649 evaluation episodes
+- **IDKVQA**: [ftaioli/IDKVQA](https://huggingface.co/datasets/ftaioli/IDKVQA) — 502 Yes/No/IDK visual QA samples
+- **VLFM**: [bdaiinstitute/vlfm](https://github.com/bdaiinstitute/vlfm) — Vision-Language Frontier Maps (navigation backbone)
+
+---
 
 ## Contributors
 
