@@ -166,10 +166,13 @@ class GraphMatcher:
             return score
         if vlm_judge_fn is None:
             return score
+        # Sem facts no KG, o vlm_judge não é suficiente para STOP — forçar ASK primeiro.
+        if target.num_facts == 0:
+            print(f"[GraphMatcher] vlm_judge skipped — no target facts yet (score={score})")
+            return score
         obj_desc = obj.to_natural_language()
         target_desc = target.to_natural_language()
         try:
-            # Passa o crop se disponível — permite comparação visual
             import inspect
 
             sig = inspect.signature(vlm_judge_fn)

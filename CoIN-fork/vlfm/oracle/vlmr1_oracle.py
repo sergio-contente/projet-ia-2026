@@ -33,6 +33,9 @@ class VLMr1Oracle:
     @staticmethod
     def _is_yesno_question(question: str) -> bool:
         q = question.strip().lower()
+        # Escolha "A or B" precisa de resposta aberta, não yes/no
+        if q.startswith(("is ", "are ")) and " or " in q and "yes or no" not in q:
+            return False
         yesno_prefixes = ("is ", "does ", "can ", "are ", "has ", "do ", "was ", "were ", "could ")
         return q.startswith(yesno_prefixes)
 

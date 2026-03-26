@@ -114,7 +114,8 @@ class SceneKnowledgeGraph:
             (r"what material ", "material"),
             (r"is the .+ large or small", "size"),
             (r"in which room ", "location"),
-            (r"what is the .+ near", "near"),
+            # Non-greedy para "What is the bed near or next to?"
+            (r"what is the .+? near", "near"),
             (r"does the .+ have a glass door", "has_glass_door"),
             (r"does the .+ have a handle", "has_handle"),
             (r"does the .+ have drawers", "has_drawer"),
@@ -130,6 +131,15 @@ class SceneKnowledgeGraph:
                 if m:
                     return m.group(1)
         return None
+
+    @staticmethod
+    def _normalize_open_answer_value(text: str) -> str:
+        """Strip common noise from oracle open answers before storing as attribute value."""
+        r = text.strip().lower().rstrip(".")
+        for prefix in ("it's ", "it is ", "its ", "the ", "a ", "an "):
+            if r.startswith(prefix):
+                r = r[len(prefix) :].strip()
+        return r
 
     def update_target_facts(
         self, user_response: str, timestep: int = 0, question: str | None = None,
@@ -151,7 +161,7 @@ class SceneKnowledgeGraph:
         if question is not None:
             attr = self._infer_attribute_from_question(question)
             if attr is not None:
-                r = user_response.strip().lower().rstrip(".")
+                r = self._normalize_open_answer_value(user_response)
                 if r and r not in ("i don't know", "i dont know", "unknown"):
                     is_neg = r.startswith("no")
                     if is_neg:
