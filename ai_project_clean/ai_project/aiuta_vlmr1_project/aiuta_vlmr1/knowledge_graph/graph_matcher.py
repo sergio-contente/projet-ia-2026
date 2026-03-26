@@ -179,10 +179,28 @@ class GraphMatcher:
                 f"forcing ASK (matched={matched}, total={total})"
             )
             return -1.0
+
+        positive_matched = 0
+        for attr_name, target_val in target.known_attributes.items():
+            obj_val = obj.get_attribute_value(attr_name)
+            if obj_val is not None:
+                if _known_pair_result(obj_val, target_val, loader) == "match":
+                    positive_matched += 1
+
         score = matched / resolved
+
+        if positive_matched == 0 and matched > 0:
+            capped = min(score, 0.5)
+            print(
+                f"[GraphMatcher] alignment score={score:.2f} but positive_matched=0 "
+                f"(all matches from negatives) — capping to {capped:.2f}"
+            )
+            score = capped
+
         print(
             f"[GraphMatcher] alignment score={score:.2f} "
-            f"(matched={matched}, resolved={resolved}, total_target={total})"
+            f"(matched={matched}, positive_matched={positive_matched}, "
+            f"resolved={resolved}, total_target={total})"
         )
         return score
 
