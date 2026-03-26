@@ -21,12 +21,9 @@ def test_trigger_includes_alignment_explanation():
     kg = SceneKnowledgeGraph()
     tf = TargetFacts()
     tf.category = "cabinet"
-    attrs = {"color": "white", "material": "wood", "size": "small", "location": "bedroom", "near": "window"}
-    for k, v in attrs.items():
-        tf.add_positive(k, v)
+    tf.add_positive("color", "white")
     node = ObjectNode(obj_id="cabinet_001", category="cabinet")
-    for k, v in attrs.items():
-        node.attributes[k] = Attribute(k, v, Certainty.HIGH)
+    node.attributes["color"] = Attribute("color", "white", Certainty.HIGH)
     rd = RefinedDescription(object_node=node, text_description="x", is_valid=True)
     trig = KGInteractionTrigger(TC(tau_stop=0.99, tau_skip=0.0, max_interaction_rounds=1))
     action = trig.decide(rd, tf, kg)

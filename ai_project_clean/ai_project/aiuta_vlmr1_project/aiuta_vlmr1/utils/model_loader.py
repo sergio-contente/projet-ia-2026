@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+    from transformers import AutoModelForVision2Seq as Qwen2_5_VLForConditionalGeneration, AutoProcessor
     from ..config import ModelConfig
 
 
@@ -65,7 +65,7 @@ class ModelLoader:
         return cls._instances[key]
 
     def _init(self, model_config: ModelConfig) -> None:
-        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+        from transformers import AutoModelForVision2Seq as Qwen2_5_VLForConditionalGeneration, AutoProcessor
 
         dtype_map = {
             "bfloat16": torch.bfloat16,
