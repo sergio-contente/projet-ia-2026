@@ -242,13 +242,24 @@ class AIUTAPipeline:
                 observation, [self._target_category], kg_context=kg_context
             )
 
+        return self._process_detections(det_result, observation, timestep)
+
+    def on_detection_with_result(
+        self, det_result: Any, observation: Any, timestep: int
+    ) -> PipelineStepResult:
+        """Same as on_detection but reuses a pre-computed DetectionResult."""
+        self._timestep = timestep
+        self._current_observation = observation
+        return self._process_detections(det_result, observation, timestep)
+
+    def _process_detections(
+        self, det_result: Any, observation: Any, timestep: int
+    ) -> PipelineStepResult:
         asked_here = 0
         final_signal = PolicySignal.CONTINUE
         raw_n = len(det_result.detections)
         valid_n = 0
 
-        # Budget check: if we've already asked too many questions this episode,
-        # force STOP on any valid detection to avoid wasting budget indefinitely.
         max_q = getattr(self._config.trigger, "max_questions_per_episode", 6)
         if self._num_questions_asked >= max_q and raw_n > 0:
             print(

@@ -17,10 +17,49 @@ from .prompt_templates import PromptBuilder
 from ..utils.model_loader import ModelLoader
 
 
+MAX_AREA_RATIO = 0.50
+MIN_AREA_PX = 32 * 32
+
+
 class VLMr1Detector(AbstractDetector):
     def __init__(self, config):
         self._config = config
         self._loader = ModelLoader.get_instance(config.model)
+
+    @staticmethod
+    def _filter_detections(
+        dets: list[Detection], width: int, height: int
+    ) -> list[Detection]:
+        """Reject oversized (scene-level) and tiny (noise) bboxes."""
+        frame_area = width * height
+        if frame_area <= 0:
+            return dets
+        filtered: list[Detection] = []
+        for d in dets:
+            x1, y1, x2, y2 = d.bbox
+            det_area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            ratio = det_area / frame_area
+            if ratio > MAX_AREA_RATIO:
+                print(
+                    f"[DETECT_FILTER] REJECTED {d.label} bbox={d.bbox} "
+                    f"area_ratio={ratio:.1%} > {MAX_AREA_RATIO:.0%}"
+                )
+                continue
+            if det_area < MIN_AREA_PX:
+                print(
+                    f"[DETECT_FILTER] REJECTED {d.label} bbox={d.bbox} "
+                    f"too small ({det_area:.0f}px)"
+                )
+                continue
+            filtered.append(d)
+        if not filtered and dets:
+            dets_sorted = sorted(
+                dets,
+                key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),
+            )
+            filtered = [dets_sorted[0]]
+            print(f"[DETECT_FILTER] All filtered — keeping smallest: {filtered[0].bbox}")
+        return filtered
 
     @staticmethod
     def _crop_for_bbox(observation: np.ndarray, bbox: list[float]) -> np.ndarray | None:
@@ -124,6 +163,14 @@ class VLMr1Detector(AbstractDetector):
             ]},
         ]
         _, result = self._run_forward(messages)
+        try:
+            from PIL import Image as _PILImg
+            _im = _PILImg.open(image_path)
+            result.detections = self._filter_detections(
+                result.detections, _im.width, _im.height
+            )
+        except Exception:
+            pass
         return result
 
     def detect_from_observation(self, observation: np.ndarray,
@@ -157,6 +204,8 @@ class VLMr1Detector(AbstractDetector):
                 },
             ]
             _, result = self._run_forward(messages)
+            h, w = observation.shape[:2]
+            result.detections = self._filter_detections(result.detections, w, h)
             crops_ok = 0
             crops_fail = 0
             for d in result.detections:

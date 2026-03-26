@@ -60,9 +60,20 @@ def extract_think_features(
         feat = feat.strip()
         low = feat.lower()
 
-        if len(feat) < 3 or len(feat.split()) < 2:
+        if len(feat) < 3:
             continue
         if low in _GENERIC_FEATURES or low == category.lower():
+            continue
+        # Strip category name from the feature phrase to avoid "dresser of dresser"
+        cat_lower = category.lower()
+        words = low.split()
+        words_no_cat = [w for w in words if w != cat_lower]
+        if not words_no_cat:
+            continue
+        if words_no_cat != words:
+            feat = " ".join(words_no_cat)
+            low = feat.lower()
+        if len(feat.split()) < 2 and len(feat) < 5:
             continue
         if len(feat.split()) > 6:
             continue
@@ -111,6 +122,8 @@ def feature_to_question(feature: str, category: str) -> str:
     qualifier, subject = decompose_feature(feature)
     if not subject:
         return f"What is the {category} near or next to?"
+    if subject.lower() == category.lower():
+        return f"Can you describe any distinctive features of the {category}?"
     return f"Describe the {subject} of the {category}."
 
 

@@ -9,6 +9,12 @@ from .schema import ObjectNode, TargetFacts
 from .scene_graph import SceneKnowledgeGraph
 from .think_feature_extractor import feature_to_attribute_name, feature_to_question
 
+YESNO_TEMPLATES = {
+    "color": "Is the {category} {value} in color?",
+    "material": "Is the {category} made of {value}?",
+    "size": "Is the {category} {value}?",
+}
+
 QUESTION_TEMPLATES = {
     "color": "What color is the {category}?",
     "material": "What material is the {category} made of?",
@@ -34,13 +40,23 @@ class QuestionGenerator:
         asked = set(target.asked_questions)
         known = set(target.known_attributes.keys()) | set(target.negative_attributes.keys())
 
-        # Priority 1: Think features from <think> block (highly discriminative)
+        # Priority 0: Confirm attributes the detected object already has (yes/no)
+        for attr_name, attr_obj in obj.attributes.items():
+            if attr_name in known or attr_name.startswith("think_"):
+                continue
+            template = YESNO_TEMPLATES.get(attr_name)
+            if template:
+                candidate = template.format(category=obj.category, value=attr_obj.value)
+                if candidate not in asked:
+                    return candidate
+
+        # Priority 1: Think features from description pass (highly discriminative)
         think_features: list[str] = getattr(obj, "_think_features", None) or []
         for feat in think_features:
             attr_name = feature_to_attribute_name(feat)
             if attr_name not in known:
                 candidate = feature_to_question(feat, obj.category)
-                if candidate not in asked:
+                if candidate not in asked and f"the {obj.category} of the {obj.category}" not in candidate.lower():
                     return candidate
 
         # Priority 2: Template questions (common attributes)

@@ -69,6 +69,8 @@ class VLMr1Bridge:
         self._target_category: str = ""
         self._oracle = None
         self._last_visual_entropy = 1.0
+        self._cached_det_result: Any = None
+        self._cached_det_frame_id: int | None = None
 
     def _make_vlm_judge(self) -> Callable[[str, str], bool]:
         """Returns (obj_desc, target_desc) -> bool usando comparação visual VLM-R1."""
@@ -129,6 +131,8 @@ class VLMr1Bridge:
 
     def detect(self, rgb: np.ndarray, timestep: int = 0) -> BridgeDetectionResult:
         res = self.detector.detect_from_observation(rgb, [self._target_category], kg_context=None)
+        self._cached_det_result = res
+        self._cached_det_frame_id = id(rgb)
         dets: list[BridgeDetection] = []
         for d in res.detections:
             dets.append(
@@ -142,6 +146,12 @@ class VLMr1Bridge:
         return BridgeDetectionResult(detections=dets, reasoning_text=res.reasoning_text)
 
     def pipeline_step(self, rgb: np.ndarray, timestep: int) -> Any:
-        step = self.pipeline.on_detection(rgb, timestep=timestep)
+        if self._cached_det_result is not None and self._cached_det_frame_id == id(rgb):
+            step = self.pipeline.on_detection_with_result(
+                self._cached_det_result, rgb, timestep=timestep
+            )
+            self._cached_det_result = None
+        else:
+            step = self.pipeline.on_detection(rgb, timestep=timestep)
         return step
 
