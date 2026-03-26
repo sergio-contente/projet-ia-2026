@@ -325,13 +325,16 @@ class AIUTAPipeline:
                     response = self._ask_human(action.question or "")
                     self._kg.update_target_facts(response, timestep, question=action.question)
                     is_idk = response.strip().lower().rstrip(".") in (
-                        "i don't know", "i dont know", "unknown", "not sure",
+                        "i don't know",
+                        "i dont know",
+                        "unknown",
+                        "not sure",
                     )
-                    if not is_idk:
-                        self._num_questions_asked += 1
-                        asked_here += 1
-                    else:
-                        print("[AIUTAPipeline] IDK response — not counting toward budget")
+                    # Always count — fair comparison with AIUTA (counts all Oracle queries)
+                    self._num_questions_asked += 1
+                    asked_here += 1
+                    if is_idk:
+                        print("[AIUTAPipeline] IDK response (still counted toward NQ)")
                     log_entry["user_response"] = response
 
                     oracle_no = response.strip().lower().startswith("no")
