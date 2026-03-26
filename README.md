@@ -45,9 +45,19 @@ The project has two phases:
 
 **What is NOT changed**: VLFM navigation policy, BLIP-2 frontier scoring (value map), MobileSAM segmentation, PointNav movement. These remain from the original CoIN codebase.
 
+<p align="center">
+<img src="images/original_aiuta_vs_vlmr1_comparison.svg" width="100%" alt="AIUTA Original vs VLM-R1 comparison"/>
+<br/><em>Side-by-side: AIUTA original (10–14 calls) vs AIUTA-VLM-R1 (2–3 calls)</em>
+</p>
+
 ---
 
 ## Architecture
+
+<p align="center">
+<img src="images/aiuta_vlmr1_system_overview.svg" width="100%" alt="System Overview"/>
+<br/><em>System overview: VLFM navigation loop with AIUTA-VLM-R1 reasoning pipeline</em>
+</p>
 
 ### Single Model, Multiple Roles
 
@@ -97,6 +107,11 @@ Observation (512×512 RGB)
 
 *Detection VQA reuses the already-loaded model, counted as part of the same detection cycle.
 
+<p align="center">
+<img src="images/aiuta_vlmr1_reasoning_pipeline.svg" width="100%" alt="Reasoning Pipeline"/>
+<br/><em>Detailed reasoning pipeline: from VLM-R1 forward pass to STOP/CONTINUE decision</em>
+</p>
+
 ### Knowledge Graph Schema
 
 ```
@@ -116,6 +131,11 @@ TargetFacts
 ```
 
 The KG is **passive memory**: it stores and retrieves facts but never generates text. The `QuestionGenerator` queries the KG to decide what to ask; `GraphMatcher` queries it to compute alignment. Both are deterministic, zero-call operations.
+
+<p align="center">
+<img src="images/kg_attribute_flow_and_yesno_chain.svg" width="100%" alt="KG Attribute Flow"/>
+<br/><em>Yes/No parsing chain: from Oracle answer to KG target facts, with contradiction detection</em>
+</p>
 
 ---
 

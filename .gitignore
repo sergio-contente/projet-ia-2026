@@ -16,3 +16,6 @@ __pycache__/
 
 # HuggingFace cache
 hf_cache/
+
+# pytest cache
+**/.pytest_cache/*
