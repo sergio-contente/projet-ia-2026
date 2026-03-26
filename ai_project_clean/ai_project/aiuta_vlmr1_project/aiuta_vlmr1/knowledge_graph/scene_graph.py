@@ -109,23 +109,8 @@ class SceneKnowledgeGraph:
         import re
 
         q = question.strip().lower()
-        # Think-feature open-ended patterns (priority — before generic templates)
-        m = re.search(r"what colou?r is the (\w+) on", q)
-        if m:
-            return f"think_{m.group(1)}"
-        m = re.search(r"what material is the (\w+) on", q)
-        if m:
-            return f"think_{m.group(1)}"
-        m = re.search(r"what pattern does the (\w+) on", q)
-        if m:
-            return f"think_{m.group(1)}"
-        m = re.search(r"what texture does the (\w+) on", q)
-        if m:
-            return f"think_{m.group(1)}"
-        m = re.search(r"is the (\w+) on the .+ large or small", q)
-        if m:
-            return f"think_{m.group(1)}"
-        m = re.search(r"describe the (\w+) on", q)
+        # Think feature: "Describe the {subject} of the {category}."
+        m = re.search(r"describe the (\w+) of", q)
         if m:
             return f"think_{m.group(1)}"
 

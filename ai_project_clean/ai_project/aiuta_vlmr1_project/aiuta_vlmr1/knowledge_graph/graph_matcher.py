@@ -94,24 +94,34 @@ def _embedding_match(
     return "uncertain"
 
 
+def _short_match(a: str, b: str) -> bool:
+    """Substring + synonym check for short attribute values."""
+    if a == b:
+        return True
+    if a in b or b in a:
+        return True
+    from .think_feature_extractor import qualifier_matches_response
+    return qualifier_matches_response(a, b)
+
+
 def _known_pair_result(obj_val: str, target_val: str, loader: Any | None) -> str:
     o = obj_val.strip().lower()
     t = target_val.strip().lower()
-    if len(o.split()) <= 3 and len(t.split()) <= 3:
-        return "match" if o == t else "mismatch"
+    if len(o.split()) <= 3 or len(t.split()) <= 3:
+        return "match" if _short_match(o, t) else "mismatch"
     if loader is not None:
         return _embedding_match(obj_val, target_val, loader)
-    return "match" if o == t else "mismatch"
+    return "match" if _short_match(o, t) else "mismatch"
 
 
 def _negative_pair_result(obj_val: str, neg_val: str, loader: Any | None) -> str:
     o = obj_val.strip().lower()
     n = neg_val.strip().lower()
-    if len(o.split()) <= 3 and len(n.split()) <= 3:
-        return "match" if o == n else "mismatch"
+    if len(o.split()) <= 3 or len(n.split()) <= 3:
+        return "match" if _short_match(o, n) else "mismatch"
     if loader is not None:
         return _embedding_match(obj_val, neg_val, loader)
-    return "match" if o == n else "mismatch"
+    return "match" if _short_match(o, n) else "mismatch"
 
 
 MIN_RESOLVED_FOR_STOP = 2

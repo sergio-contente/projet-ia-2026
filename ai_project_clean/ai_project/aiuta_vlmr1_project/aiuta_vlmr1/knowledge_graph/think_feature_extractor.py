@@ -1,17 +1,8 @@
 """
-think_feature_extractor.py — Extract discriminative visual features from
-VLM structured description output for contextual question generation.
+think_feature_extractor.py — Extract and process visual features from VLM descriptions.
 
-Features are decomposed into (qualifier, subject, type) so that open-ended
-questions can be generated instead of yes/no (which the VLM-R1 3B oracle
-answers with IDK ~70% of the time).
-
-Example: "green mattress" → qualifier="green", subject="mattress", type="color"
-  → question: "What color is the mattress on the bed?"
-  → obj attr: think_mattress = "green"
-  → oracle answers: "white"
-  → target attr: think_mattress = "white"
-  → alignment: "green" ≠ "white" → mismatch → CONTINUE
+Truly open-ended: no hardcoded dictionaries of adjectives or question types.
+Uses a single universal template and substring matching for comparison.
 """
 from __future__ import annotations
 
@@ -24,37 +15,24 @@ _GENERIC_FEATURES = frozenset({
     "the room", "the image", "the scene", "the wall", "the floor",
     "the ceiling", "this image", "the background",
     "unknown", "none", "n/a", "not visible", "not sure",
+    "no visible objects",
 })
+
+_SPATIAL_PREFIXES = ("near", "against", "beside", "behind", "next to", "in front of")
 
 _META_PREFIXES = (
     "i can", "i see", "the image", "this is", "there is", "it appears",
     "it looks", "it seems", "the photo", "in this",
 )
 
-_QUALIFIER_TO_QUESTION_TYPE: dict[str, str] = {
-    "red": "color", "blue": "color", "green": "color", "black": "color",
-    "white": "color", "yellow": "color", "brown": "color", "gray": "color",
-    "grey": "color", "orange": "color", "pink": "color", "purple": "color",
-    "beige": "color", "dark": "color", "light": "color",
-    "dark-colored": "color", "light-colored": "color",
-    "wooden": "material", "metal": "material", "leather": "material",
-    "glass": "material", "fabric": "material", "ceramic": "material",
-    "marble": "material", "wicker": "material", "plastic": "material",
-    "cotton": "material", "silk": "material", "wool": "material",
-    "large": "size", "small": "size", "big": "size", "tiny": "size",
-    "medium": "size", "tall": "size", "short": "size",
-    "striped": "pattern", "checkered": "pattern", "plaid": "pattern",
-    "floral": "pattern", "patterned": "pattern", "plain": "pattern",
-    "smooth": "texture", "rough": "texture", "textured": "texture",
-    "quilted": "texture", "embroidered": "texture", "soft": "texture",
-}
-
-_QUESTION_TEMPLATES_BY_TYPE: dict[str, str] = {
-    "color": "What color is the {subject} on the {category}?",
-    "material": "What material is the {subject} on the {category} made of?",
-    "size": "Is the {subject} on the {category} large or small?",
-    "pattern": "What pattern does the {subject} on the {category} have?",
-    "texture": "What texture does the {subject} on the {category} have?",
+_SYNONYMS: dict[str, str] = {
+    "wooden": "wood", "wood": "wooden",
+    "metallic": "metal", "metal": "metallic",
+    "grey": "gray", "gray": "grey",
+    "big": "large", "large": "big",
+    "small": "tiny", "tiny": "small",
+    "dark-colored": "dark", "dark": "dark-colored",
+    "light-colored": "light", "light": "light-colored",
 }
 
 
@@ -62,10 +40,8 @@ def extract_think_features(
     description: str, category: str, max_features: int = 5
 ) -> list[str]:
     """
-    Extract distinctive visual features from a VLM structured description.
-
-    Expects comma-separated or newline-separated short phrases like:
-      "dark-colored mattress, textured surface, fabric material, against wall"
+    Extract features from a structured VLM description (comma/newline separated).
+    Returns cleaned list of 2+ word phrases: ["green mattress", "metal frame"]
     """
     if not description:
         return []
@@ -82,13 +58,11 @@ def extract_think_features(
             if feat.lower().startswith(prefix):
                 feat = feat[len(prefix):]
         feat = feat.strip()
-
         low = feat.lower()
-        if len(feat) < 3:
+
+        if len(feat) < 3 or len(feat.split()) < 2:
             continue
-        if low in _GENERIC_FEATURES:
-            continue
-        if low == category.lower():
+        if low in _GENERIC_FEATURES or low == category.lower():
             continue
         if len(feat.split()) > 6:
             continue
@@ -105,68 +79,52 @@ def extract_think_features(
     return features
 
 
-def _decompose_feature(feature: str) -> tuple[str, str, str]:
+def decompose_feature(feature: str) -> tuple[str, str]:
     """
-    Decompose "green mattress" → ("green", "mattress", "color").
-    Decompose "near window"    → ("window", "", "spatial").
+    Split feature into (qualifier, subject).
+    "green mattress" → ("green", "mattress")
+    "dark-colored large mattress" → ("dark-colored large", "mattress")
+    "near window" → ("window", "")
     """
-    words = feature.lower().strip().split()
+    words = feature.strip().split()
 
-    if words[0] in ("near", "against", "beside", "behind", "next"):
-        subject = " ".join(words[1:]).lstrip("to ")
-        return (subject, "", "spatial")
+    for sp in _SPATIAL_PREFIXES:
+        sp_words = sp.split()
+        if [w.lower() for w in words[: len(sp_words)]] == sp_words:
+            rest = " ".join(words[len(sp_words) :])
+            return (rest, "")
 
-    if len(words) >= 2:
-        for i in range(1, len(words)):
-            if words[0] in _QUALIFIER_TO_QUESTION_TYPE:
-                qualifier = " ".join(words[:i])
-                subject = " ".join(words[i:])
-                q_type = _QUALIFIER_TO_QUESTION_TYPE[words[0]]
-                return (qualifier, subject, q_type)
-        return (words[0], " ".join(words[1:]), "unknown")
+    if len(words) == 1:
+        return (words[0], "")
 
-    return (feature, "", "unknown")
+    subject = words[-1]
+    qualifier = " ".join(words[:-1])
+    return (qualifier, subject)
 
 
 def feature_to_question(feature: str, category: str) -> str:
     """
-    Convert a visual feature into an OPEN-ENDED question for the oracle.
-
-    "green mattress" → "What color is the mattress on the bed?"
-    "metal frame"    → "What material is the frame on the bed made of?"
+    One universal template — no classification needed.
+    "green mattress" → "Describe the mattress of the bed."
     "near window"    → "What is the bed near or next to?"
     """
-    qualifier, subject, q_type = _decompose_feature(feature)
-
-    if q_type == "spatial":
+    qualifier, subject = decompose_feature(feature)
+    if not subject:
         return f"What is the {category} near or next to?"
-
-    if q_type in _QUESTION_TEMPLATES_BY_TYPE and subject:
-        return _QUESTION_TEMPLATES_BY_TYPE[q_type].format(
-            subject=subject, category=category
-        )
-
-    if subject:
-        return f"Describe the {subject} on the {category}."
-
-    return f"Does the {category} have a {feature}?"
+    return f"Describe the {subject} of the {category}."
 
 
 def feature_to_attribute_name(feature: str) -> str:
     """
-    Noun-based KG attribute name.
-
+    Noun-based attribute name.
     "green mattress" → "think_mattress"
-    "metal frame"    → "think_frame"
     "near window"    → "think_near"
     """
-    _qualifier, subject, q_type = _decompose_feature(feature)
-    if q_type == "spatial":
+    _qualifier, subject = decompose_feature(feature)
+    if not subject:
         base = "near"
-    elif subject:
-        base = re.sub(r"[^a-z0-9]+", "_", subject).strip("_")
     else:
-        base = re.sub(r"[^a-z0-9]+", "_", feature.lower()).strip("_")
+        base = re.sub(r"[^a-z0-9]+", "_", subject.lower()).strip("_")
     if len(base) > 30:
         base = base[:30].rstrip("_")
     return f"think_{base}"
@@ -174,11 +132,29 @@ def feature_to_attribute_name(feature: str) -> str:
 
 def feature_to_qualifier(feature: str) -> str:
     """
-    Extract the qualifier (adjective/value) that the detection observed.
-
+    Extract the qualifier (what the detection observed).
     "green mattress" → "green"
-    "metal frame"    → "metal"
     "near window"    → "window"
     """
-    qualifier, _subject, _q_type = _decompose_feature(feature)
-    return qualifier
+    qualifier, _subject = decompose_feature(feature)
+    return qualifier.lower().strip()
+
+
+def qualifier_matches_response(qualifier: str, oracle_response: str) -> bool:
+    """
+    Substring + synonym check.
+    "green" in "white cotton mattress" → False
+    "white" in "white cotton mattress" → True
+    "wooden" vs "wood frame"           → True (synonym)
+    """
+    q = qualifier.lower().strip()
+    r = oracle_response.lower().strip()
+
+    if q in r or r in q:
+        return True
+
+    syn = _SYNONYMS.get(q)
+    if syn and syn in r:
+        return True
+
+    return False
