@@ -16,8 +16,8 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 # Entropy threshold for visual judge soft-maybe.
-# Below this: model is confident in rejection → hard "no".
-# At or above: model is uncertain → treat as "maybe" and delegate to KG alignment.
+# Below this: model is confident in rejection -> hard "no".
+# At or above: model is uncertain -> treat as "maybe" and delegate to KG alignment.
 ENTROPY_MAYBE_THRESHOLD = 0.04
 
 
@@ -73,13 +73,13 @@ class VLMr1Bridge:
         self._cached_det_frame_id: int | None = None
 
     def _make_vlm_judge(self) -> Callable[[str, str], bool]:
-        """Returns (obj_desc, target_desc) -> bool usando comparação visual VLM-R1."""
+        """Returns (obj_desc, target_desc) -> bool using VLM-R1 visual comparison."""
 
         def judge(obj_desc: str, target_desc: str, detected_crop=None) -> bool:
             if not hasattr(self, "_oracle") or self._oracle is None:
                 return False
 
-            # Conta comparações visuais separadamente do NQ
+            # Count visual comparisons separately from NQ
             try:
                 self.pipeline._num_visual_comparisons = getattr(
                     self.pipeline, "_num_visual_comparisons", 0
@@ -95,17 +95,17 @@ class VLMr1Bridge:
                     except Exception:
                         pass
                     if is_match:
-                        print(f"[VLMr1Bridge] Visual judge → yes (entropy={entropy:.3f})")
+                        print(f"[VLMr1Bridge] Visual judge -> yes (entropy={entropy:.3f})")
                         return True
                     if entropy >= ENTROPY_MAYBE_THRESHOLD:
-                        print(f"[VLMr1Bridge] Visual judge → soft-maybe (entropy={entropy:.3f} >= {ENTROPY_MAYBE_THRESHOLD})")
+                        print(f"[VLMr1Bridge] Visual judge -> soft-maybe (entropy={entropy:.3f} >= {ENTROPY_MAYBE_THRESHOLD})")
                         return True
-                    print(f"[VLMr1Bridge] Visual judge → hard-no (entropy={entropy:.3f} < {ENTROPY_MAYBE_THRESHOLD})")
+                    print(f"[VLMr1Bridge] Visual judge -> hard-no (entropy={entropy:.3f} < {ENTROPY_MAYBE_THRESHOLD})")
                     return False
                 except Exception as e:
                     print(f"[VLMr1Bridge] Visual judge fallback to text: {e}")
 
-            # Fallback textual — conta como pergunta ao usuário
+            # Textual fallback -- counts as a question to the user
             try:
                 self.pipeline._num_questions_asked += 1
             except Exception:

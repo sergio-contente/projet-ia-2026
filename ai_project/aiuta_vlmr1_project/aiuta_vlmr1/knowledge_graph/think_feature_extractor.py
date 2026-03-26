@@ -1,5 +1,5 @@
 """
-think_feature_extractor.py — Extract and process visual features from VLM descriptions.
+think_feature_extractor.py -- Extract and process visual features from VLM descriptions.
 
 Truly open-ended: no hardcoded dictionaries of adjectives or question types.
 Uses a single universal template and substring matching for comparison.
@@ -93,9 +93,9 @@ def extract_think_features(
 def decompose_feature(feature: str) -> tuple[str, str]:
     """
     Split feature into (qualifier, subject).
-    "green mattress" → ("green", "mattress")
-    "dark-colored large mattress" → ("dark-colored large", "mattress")
-    "near window" → ("window", "")
+    "green mattress" ->("green", "mattress")
+    "dark-colored large mattress" ->("dark-colored large", "mattress")
+    "near window" ->("window", "")
     """
     words = feature.strip().split()
 
@@ -115,9 +115,9 @@ def decompose_feature(feature: str) -> tuple[str, str]:
 
 def feature_to_question(feature: str, category: str) -> str:
     """
-    One universal template — no classification needed.
-    "green mattress" → "Describe the mattress of the bed."
-    "near window"    → "What is the bed near or next to?"
+    One universal template -- no classification needed.
+    "green mattress" ->"Describe the mattress of the bed."
+    "near window"    ->"What is the bed near or next to?"
     """
     qualifier, subject = decompose_feature(feature)
     if not subject:
@@ -130,8 +130,8 @@ def feature_to_question(feature: str, category: str) -> str:
 def feature_to_attribute_name(feature: str) -> str:
     """
     Noun-based attribute name.
-    "green mattress" → "think_mattress"
-    "near window"    → "think_near"
+    "green mattress" ->"think_mattress"
+    "near window"    ->"think_near"
     """
     _qualifier, subject = decompose_feature(feature)
     if not subject:
@@ -146,8 +146,8 @@ def feature_to_attribute_name(feature: str) -> str:
 def feature_to_qualifier(feature: str) -> str:
     """
     Extract the qualifier (what the detection observed).
-    "green mattress" → "green"
-    "near window"    → "window"
+    "green mattress" ->"green"
+    "near window"    ->"window"
     """
     qualifier, _subject = decompose_feature(feature)
     return qualifier.lower().strip()
@@ -156,9 +156,9 @@ def feature_to_qualifier(feature: str) -> str:
 def qualifier_matches_response(qualifier: str, oracle_response: str) -> bool:
     """
     Substring + synonym check.
-    "green" in "white cotton mattress" → False
-    "white" in "white cotton mattress" → True
-    "wooden" vs "wood frame"           → True (synonym)
+    "green" in "white cotton mattress" ->False
+    "white" in "white cotton mattress" ->True
+    "wooden" vs "wood frame"           ->True (synonym)
     """
     q = qualifier.lower().strip()
     r = oracle_response.lower().strip()

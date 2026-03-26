@@ -1,4 +1,4 @@
-"""schema.py — Data model for the Knowledge Graph."""
+"""schema.py -- Data model for the Knowledge Graph."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
@@ -49,7 +49,7 @@ class ObjectNode:
     spatial_relations: list[SpatialRelation] = field(default_factory=list)
     is_target_candidate: bool = False
     alignment_score: float = -1.0
-    detected_crop: object = None  # np.ndarray | None — crop RGB do objeto detectado
+    detected_crop: object = None  # np.ndarray | None -- RGB crop of detected object
 
     def get_attribute_value(self, name: str) -> str | None:
         attr = self.attributes.get(name)

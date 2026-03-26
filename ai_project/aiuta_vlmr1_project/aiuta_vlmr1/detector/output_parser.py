@@ -1,4 +1,4 @@
-"""output_parser.py — Parse VLM-R1 raw output into structured data.
+"""output_parser.py -- Parse VLM-R1 raw output into structured data.
 Refactored from benchmark_ovd.py extract_* functions."""
 from __future__ import annotations
 import json, re

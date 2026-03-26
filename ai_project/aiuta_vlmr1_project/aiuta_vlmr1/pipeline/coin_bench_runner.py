@@ -1,12 +1,12 @@
 """
-coin_bench_runner — CoIN-Bench offline evaluation with SR / SPL / NQ (static proxy).
+coin_bench_runner -- CoIN-Bench offline evaluation with SR / SPL / NQ (static proxy).
 
 Modes:
   - ``entropy``: ``run_entropy_coin_episode`` + ``CoINBenchEnv``
   - ``aiuta_pipeline``: full ``AIUTAPipeline`` with simulated user
   - ``raw``: single VLM VQA call (no entropy gating)
 
-SPL/SR here use ``shortest_path_length=1`` and discrete step counts — not Habitat geodesics.
+SPL/SR here use ``shortest_path_length=1`` and discrete step counts -- not Habitat geodesics.
 """
 from __future__ import annotations
 

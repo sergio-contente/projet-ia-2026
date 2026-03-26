@@ -1,5 +1,5 @@
 """
-coin_metrics.py — Online / embodied CoIN-style metrics: SR, SPL, NQ.
+coin_metrics.py -- Online / embodied CoIN-style metrics: SR, SPL, NQ.
 
 These require **Habitat-style navigation** (path length, success distance, etc.).
 They are **not** produced by offline IDKVQA static QA runs or by the auxiliary
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 
-# CoIN success threshold (meters) — from GOAT-Bench / Habitat standard
+# CoIN success threshold (meters) -- from GOAT-Bench / Habitat standard
 SUCCESS_DISTANCE_THRESHOLD = 1.0  # meters
 
 

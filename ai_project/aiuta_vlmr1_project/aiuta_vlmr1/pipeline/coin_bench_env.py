@@ -1,5 +1,5 @@
 """
-CoINBenchEnv — adapts one CoIN-Bench episode to the interface expected by
+CoINBenchEnv -- adapts one CoIN-Bench episode to the interface expected by
 ``entropy_coin_agent.run_entropy_coin_episode`` (and related offline runners).
 
 Offline static proxy:

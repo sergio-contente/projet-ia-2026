@@ -11,7 +11,7 @@ from vlfm.vlm.vlmr1_itm_adapter import VLMr1ITMAdapter
 
 class VLMNavITMPolicy(ITMPolicyV2):
     """
-    Versão do ITMPolicyV2 que usa VLM-R1 local (via adapter) em vez do BLIP2ITM (porta 12182).
+    Version of ITMPolicyV2 that uses local VLM-R1 (via adapter) instead of BLIP2ITM (port 12182).
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -33,9 +33,9 @@ class VLMNavITMPolicy(ITMPolicyV2):
 
     def _update_value_map(self) -> None:
         """
-        Throttled value map update para VLM-R1.
-        Quando há detecções não confirmadas no detection_cloud, injeta score alto
-        na posição dessas detecções para guiar a exploração em direção a elas.
+        Throttled value map update for VLM-R1.
+        When there are unconfirmed detections in the detection_cloud, injects a high score
+        at the position of those detections to guide exploration toward them.
         """
         update_every = int(os.environ.get("VLMR1_VALUE_MAP_UPDATE_EVERY", "3"))
         update_every = max(1, update_every)
@@ -50,11 +50,11 @@ class VLMNavITMPolicy(ITMPolicyV2):
                 pass
             return
 
-        # Primeiro faz o update normal via ITM adapter
+        # First do the normal update via ITM adapter
         super()._update_value_map()
 
-        # Depois injeta score alto para detecções não confirmadas
-        # Isso garante que o agente explore em direção a objetos vistos mas não confirmados
+        # Then inject a high score for unconfirmed detections
+        # This ensures the agent explores toward objects seen but not yet confirmed
         try:
             obj_map = getattr(self, "_object_map", None)
             if obj_map is None:
@@ -68,7 +68,7 @@ class VLMNavITMPolicy(ITMPolicyV2):
             cloud = detection_cloud[target]
             if cloud is None or len(cloud) == 0:
                 return
-            # Injetar gaussian sobre o centróide das últimas detecções (últimas 5000 posições)
+            # Inject a gaussian over the centroid of the latest detections (last 5000 positions)
             recent_cloud = cloud[-5000:] if len(cloud) > 5000 else cloud
             positions_2d = recent_cloud[:, :2]
             centroid = positions_2d.mean(axis=0)

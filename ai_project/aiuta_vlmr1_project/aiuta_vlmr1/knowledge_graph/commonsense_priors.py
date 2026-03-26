@@ -1,5 +1,5 @@
 """
-commonsense_priors.py — Room-object association priors for navigation.
+commonsense_priors.py -- Room-object association priors for navigation.
 
 Provides structured common-sense knowledge:
   - Which room types typically contain which objects
@@ -301,8 +301,8 @@ class CommonSensePriors:
          Anchor objects for bathrooms: sink, mirror, bathtub."
       2. Frontier scoring: bias VLFM value map towards rooms likely
          to contain the target
-      3. Room type inference: "I see a sink and mirror → probably bathroom
-         → good place to look for toilet"
+      3. Room type inference: "I see a sink and mirror ->probably bathroom
+         ->good place to look for toilet"
     """
 
     def likely_rooms(self, object_category: str) -> list[RoomAssociation]:

@@ -122,7 +122,7 @@ def stable_idkvqa_image_id(pil_image: Any) -> str:
     """
     Stable fingerprint for an IDKVQA image (PNG bytes SHA-256).
 
-    Used for global KG deduplication and lookup: same pixels ⇒ same id, including
+    Used for global KG deduplication and lookup: same pixels => same id, including
     across samples that share one image but have different ``sample_id`` values.
     """
     buf = BytesIO()
@@ -480,9 +480,9 @@ def run_idkvqa_benchmark(
 
     - ``raw``: VLM answer only (normalized).
     - ``raw_two_pass``: same pipeline depth as ``kg`` (detection + two VQA passes) but **no** KG
-      matching, hybrid fusion, or graph triggers — controls for extra compute vs ``kg``.
+      matching, hybrid fusion, or graph triggers -- controls for extra compute vs ``kg``.
     - ``threshold``: abstain via uncertainty rule (default: normalized entropy).
-    - ``kg``: detection reasoning → triples → KG hybrid answer.
+    - ``kg``: detection reasoning -> triples -> KG hybrid answer.
     - ``kg_threshold``: KG hybrid, then uncertainty gate to IDK.
     - ``two_pass_kg`` / ``two_pass_kg_relaxed`` / ``two_pass_kg_entropy``: detection + attribute
       pass + VQA; ``two_pass_kg_relaxed`` trusts VLM when no KG slot and no hedging, while
@@ -514,7 +514,7 @@ def run_idkvqa_benchmark(
         config, opts, second_pass_model_id, second_pass_processor_id,
     )
     # When a *different* second checkpoint is used, only one model stays on GPU at a time
-    # (see ``two_pass_kg`` swap: unload primary → attribute pass → reload primary for VQA).
+    # (see ``two_pass_kg`` swap: unload primary -> attribute pass -> reload primary for VQA).
     use_sequential_second_pass = (
         second_pass_cfg is not None
         and not model_configs_equivalent(config.model, second_pass_cfg)

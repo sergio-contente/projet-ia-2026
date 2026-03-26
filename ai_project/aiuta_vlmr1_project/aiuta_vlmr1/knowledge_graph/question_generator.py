@@ -1,5 +1,5 @@
 """
-question_generator.py — Generate discriminative questions for the user.
+question_generator.py -- Generate discriminative questions for the user.
 Replaces AIUTA LLM-based question generation with KG analysis.
 """
 from __future__ import annotations

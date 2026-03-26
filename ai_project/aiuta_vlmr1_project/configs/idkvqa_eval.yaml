@@ -1,9 +1,9 @@
-# Primary offline benchmark (IDKVQA) — optional overrides merged into Config._idkvqa_eval
+# Primary offline benchmark (IDKVQA) -- optional overrides merged into Config._idkvqa_eval
 #
-# Modes disponíveis (CLI --mode):
+# Available modes (CLI --mode):
 #   raw, raw_two_pass, threshold, kg, kg_threshold,
 #   two_pass_kg, two_pass_kg_relaxed, two_pass_kg_entropy,
-#   global_kg, global_kg_entropy  (requerem --global-kg-path apontando para JSON do build_global_kg)
+#   global_kg, global_kg_entropy  (require --global-kg-path pointing to build_global_kg JSON)
 #
 detector_type: vlmr1
 questioner_type: vlmr1

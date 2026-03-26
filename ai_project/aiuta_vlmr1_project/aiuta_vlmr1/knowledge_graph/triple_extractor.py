@@ -1,5 +1,5 @@
 """
-triple_extractor.py — Extract structured triples from VLM-R1 reasoning.
+triple_extractor.py -- Extract structured triples from VLM-R1 reasoning.
 
 Refactored from analyze_reasoning.py pattern detectors:
   - detect_filtering() -> extract_absence()

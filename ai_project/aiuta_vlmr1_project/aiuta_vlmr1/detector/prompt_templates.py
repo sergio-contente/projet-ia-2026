@@ -1,4 +1,4 @@
-"""prompt_templates.py — All prompt strings for VLM-R1.
+"""prompt_templates.py -- All prompt strings for VLM-R1.
 Refactored from benchmark_ovd.py and benchmark_coco.py."""
 from __future__ import annotations
 import json

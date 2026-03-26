@@ -1,5 +1,5 @@
 """
-aiuta_vlmr1 — Uncertainty-aware VLM-R1 + Knowledge Graph integration.
+aiuta_vlmr1 -- Uncertainty-aware VLM-R1 + Knowledge Graph integration.
 
 **Primary offline benchmark:** IDKVQA (``evaluation.idkvqa_eval``) for Yes/No/IDK quality,
 calibration, abstention, and KG ablations.

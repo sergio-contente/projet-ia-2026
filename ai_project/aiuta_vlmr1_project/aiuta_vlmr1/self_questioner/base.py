@@ -1,4 +1,4 @@
-"""base.py — Abstract Self-Questioner interface."""
+"""base.py -- Abstract Self-Questioner interface."""
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

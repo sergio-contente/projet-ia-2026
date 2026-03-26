@@ -140,16 +140,16 @@ def plot_main_comparison():
     selected = [mode_map[m] for m in key_modes if m in mode_map]
 
     # Build table
-    col_labels = ["Mode", "Calls", "Acc %", "φ₁ binary", "φ₁ CoIN", "Abst %", "Overclaim %", "Note"]
+    col_labels = ["Mode", "Calls", "Acc %", "phi_1 binary", "phi_1 CoIN", "Abst %", "Overclaim %", "Note"]
 
     cell_text = []
     phi_bin_vals = []
     phi_coin_vals = []
 
     for r in selected:
-        coin = f"{r['phi_coin_c1_pct']:.1f}" if r['phi_coin_c1_pct'] is not None else "—"
+        coin = f"{r['phi_coin_c1_pct']:.1f}" if r['phi_coin_c1_pct'] is not None else "--"
         cell_text.append([
-            r["mode"].replace("threshold_tau=", "threshold τ=").replace("_", " "),
+            r["mode"].replace("threshold_tau=", "threshold tau=").replace("_", " "),
             str(int(r["calls"])),
             f"{r['accuracy_pct']:.1f}",
             f"{r['phi_binary_c1_pct']:.2f}",
@@ -166,11 +166,11 @@ def plot_main_comparison():
         cell_text.append([
             name,
             "5-8",
-            "—",
+            "--",
             f"{d['phi_binary']:.2f}",
-            "—",
-            "—",
-            "—",
+            "--",
+            "--",
+            "--",
             d["note"],
         ])
         phi_bin_vals.append(d["phi_binary"])
@@ -197,7 +197,7 @@ def plot_main_comparison():
         cell_text,
         col_labels,
         row_colors=row_colors,
-        title="IDKVQA Fair Comparison — VLM-R1 3B (ours) vs AIUTA (LLaVA 7B + GPT-4o)",
+        title="IDKVQA Fair Comparison -- VLM-R1 3B (ours) vs AIUTA (LLaVA 7B + GPT-4o)",
         output_path=FIGURES_DIR / "fair_comparison_table.png",
         highlight_rows=highlight,
     )
@@ -209,7 +209,7 @@ def plot_threshold_sweep():
     sweep = [r for r in rows_data if r["mode"].startswith("threshold_tau=")]
     sweep.sort(key=lambda r: float(r["mode"].split("=")[1]))
 
-    col_labels = ["τ", "Acc %", "φ₁ binary", "φ₁ CoIN", "Abst %", "Coverage %", "Overclaim %"]
+    col_labels = ["tau", "Acc %", "phi_1 binary", "phi_1 CoIN", "Abst %", "Coverage %", "Overclaim %"]
 
     cell_text = []
     phi_bin_vals = []
@@ -217,7 +217,7 @@ def plot_threshold_sweep():
     for r in sweep:
         tau = r["mode"].split("=")[1]
         cov = 100.0 - r["abstention_rate_pct"]
-        coin = f"{r['phi_coin_c1_pct']:.1f}" if r['phi_coin_c1_pct'] is not None else "—"
+        coin = f"{r['phi_coin_c1_pct']:.1f}" if r['phi_coin_c1_pct'] is not None else "--"
         cell_text.append([
             tau,
             f"{r['accuracy_pct']:.1f}",
@@ -242,7 +242,7 @@ def plot_threshold_sweep():
         cell_text,
         col_labels,
         row_colors=row_colors,
-        title="Entropy Threshold Sweep — VLM-R1 3B on IDKVQA (502 samples)",
+        title="Entropy Threshold Sweep -- VLM-R1 3B on IDKVQA (502 samples)",
         output_path=FIGURES_DIR / "threshold_sweep_table.png",
         highlight_rows=[best_idx],
         figsize=(9, 5),
@@ -283,7 +283,7 @@ def plot_cost_table():
                 "avg_detector": ca.get("avg_detector_latency_sec", 0),
             }
 
-    col_labels = ["Mode", "VLM Calls", "φ₁ binary", "Avg Latency (s)", "Det. Latency (s)", "API Cost"]
+    col_labels = ["Mode", "VLM Calls", "phi_1 binary", "Avg Latency (s)", "Det. Latency (s)", "API Cost"]
 
     cell_text = []
     for m in key_modes:
@@ -291,13 +291,13 @@ def plot_cost_table():
             continue
         r = mode_map[m]
         lat = latency.get(m.replace("threshold_tau=0.10", "threshold"), {})
-        display_mode = m.replace("threshold_tau=", "threshold τ=").replace("_", " ")
+        display_mode = m.replace("threshold_tau=", "threshold tau=").replace("_", " ")
         cell_text.append([
             display_mode,
             str(int(r["calls"])),
             f"{r['phi_binary_c1_pct']:.2f}",
-            f"{lat.get('avg_latency', 0):.2f}" if lat else "—",
-            f"{lat.get('avg_detector', 0):.2f}" if lat else "—",
+            f"{lat.get('avg_latency', 0):.2f}" if lat else "--",
+            f"{lat.get('avg_detector', 0):.2f}" if lat else "--",
             "$0",
         ])
 
@@ -306,15 +306,15 @@ def plot_cost_table():
         "AIUTA (LLaVA + GPT-4o)",
         "5-8",
         "21.12",
-        "—",
-        "—",
+        "--",
+        "--",
         "$$$ (API)",
     ])
 
     render_table(
         cell_text,
         col_labels,
-        title="Cost & Latency — VLM-R1 3B (local) vs AIUTA (API-dependent)",
+        title="Cost & Latency -- VLM-R1 3B (local) vs AIUTA (API-dependent)",
         output_path=FIGURES_DIR / "cost_table.png",
         highlight_rows=[len(cell_text) - 1],
         figsize=(11, 4.5),

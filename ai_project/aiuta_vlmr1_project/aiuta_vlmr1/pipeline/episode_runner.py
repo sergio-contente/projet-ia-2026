@@ -1,16 +1,16 @@
 """
-episode_runner.py — Auxiliary **offline** CoIN-derived **integration / smoke tests** only.
+episode_runner.py -- Auxiliary **offline** CoIN-derived **integration / smoke tests** only.
 
 This is **not** the primary research benchmark. Use **IDKVQA** (``evaluation.idkvqa_eval``) for
 Yes/No/IDK calibration, abstention, and KG ablations.
 
 What this runner does:
-  Runs the embodied pipeline (detector → questioner → KG trigger) on **static** images
+  Runs the embodied pipeline (detector -> questioner -> KG trigger) on **static** images
   when a **trustworthy** image path can be resolved for an episode.
 
 What it does **not** do:
   - Official online CoIN / Habitat timestep navigation, SR, SPL, or success distance.
-  - Arbitrary “first image in scene folder” substitution for ``offline_static_coin``.
+  - Arbitrary "first image in scene folder" substitution for ``offline_static_coin``.
 
 Modes:
   - ``offline_static_coin``: only images returned by ``CoINBenchLoader.get_episode_image_candidates``
@@ -220,7 +220,7 @@ def run_offline_evaluation(
     strict_coin_images: bool = False,
 ):
     """
-    Static integration test. See module docstring — **not** a primary benchmark.
+    Static integration test. See module docstring -- **not** a primary benchmark.
 
     ``strict_coin_images``: if True and ``offline_static_coin`` cannot resolve a
     metadata-linked image, raises ``RuntimeError`` immediately.
@@ -414,7 +414,7 @@ def compute_offline_metrics(results):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Auxiliary offline CoIN **static integration test** only — NOT the primary IDKVQA "
+            "Auxiliary offline CoIN **static integration test** only -- NOT the primary IDKVQA "
             "benchmark and NOT equivalent to official online CoIN / Habitat results."
         ),
     )
@@ -529,7 +529,7 @@ def main():
 
     m = metrics
     print(f"\n{'='*65}")
-    print("AUXILIARY OFFLINE CoIN STATIC — NOT official online CoIN")
+    print("AUXILIARY OFFLINE CoIN STATIC -- NOT official online CoIN")
     print(f"{'='*65}")
     print(f"  Episodes (records): {m['num_episodes']}")
     print(f"  Detection rate:     {m['detection_rate']}%")

@@ -1,5 +1,5 @@
 """
-config.py — Global configuration for the AIUTA-VLM-R1 pipeline.
+config.py -- Global configuration for the AIUTA-VLM-R1 pipeline.
 
 Loaded from YAML config files. Drives the Strategy pattern:
   config.detector_type -> which detector to instantiate

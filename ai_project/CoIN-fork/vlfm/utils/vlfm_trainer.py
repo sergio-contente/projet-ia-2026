@@ -309,7 +309,7 @@ class VLFMTrainer(PPOTrainer):
                         infos_to_save["object_category"] = self._agent._actor_critic._target_object.split("|")[0]
                     except:
                         infos_to_save["object_category"] = "None"
-                    # Número de perguntas feitas ao usuário neste episódio (métrica CoIN NQ)
+                    # Number of questions asked to the user in this episode (CoIN NQ metric)
                     try:
                         nq = self._agent._actor_critic.how_many_question_to_the_user(
                             current_episodes_info[i].episode_id
@@ -325,7 +325,7 @@ class VLFMTrainer(PPOTrainer):
                         infos_to_save["num_visual_comparisons"] = 0
                         episode_stats["num_questions_to_user"] = 0.0
                         episode_stats["num_visual_comparisons"] = 0.0
-                    # Print de monitoramento em tempo real por episódio
+                    # Real-time monitoring print per episode
                     _n_done = len(stats_episodes)
                     _sr_so_far = np.mean([v.get("success", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0
                     _spl_so_far = np.mean([v.get("spl", 0.0) for v in stats_episodes.values()]) if stats_episodes else 0.0

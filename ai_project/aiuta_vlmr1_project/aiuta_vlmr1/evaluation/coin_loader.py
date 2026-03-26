@@ -1,13 +1,13 @@
 """
-coin_loader.py — Download and parse CoIN-Bench episodes from HuggingFace.
+coin_loader.py -- Download and parse CoIN-Bench episodes from HuggingFace.
 
 This loader supplies **episode metadata** and a **content-aware observation resolver** for
 auxiliary offline integration tests. It does **not** implement online navigation or official SR/SPL.
 
 Image resolution policy (especially for ``offline_static_coin``):
   Only paths that can be linked from scene JSON metadata to the **episode** and/or
-  **target object** are returned as candidates. We **never** fall back to “first image in
-  scene folder” — that heuristic is intentionally not implemented here.
+  **target object** are returned as candidates. We **never** fall back to "first image in
+  scene folder" -- that heuristic is intentionally not implemented here.
 
 Dataset layouts vary across releases; all resolution steps are defensive and heavily commented.
 """
@@ -206,7 +206,7 @@ class CoINBenchLoader:
 
         Strategy (all best-effort; returns [] if nothing defensible is found):
 
-        1. Load per-scene ``content`` JSON. If missing → [].
+        1. Load per-scene ``content`` JSON. If missing -> [].
 
         2. If ``episodes`` array exists, find the entry whose ``episode_id`` / ``id`` matches
            ``episode.episode_id`` and collect any image-like path fields on **that** object only.
@@ -214,11 +214,11 @@ class CoINBenchLoader:
         3. If ``episode.target_object_id`` is set, find ``objects`` / ``instances`` entry with
            matching ``object_id`` / ``id`` and collect image paths from **that** object.
 
-        4. If ``target_images`` maps object_id → path(s), use the entry for ``target_object_id``.
+        4. If ``target_images`` maps object_id -> path(s), use the entry for ``target_object_id``.
 
         5. Deduplicate, keep only files that exist on disk.
 
-        Never scans arbitrary scene directories for “any image” — only JSON-linked paths.
+        Never scans arbitrary scene directories for "any image" -- only JSON-linked paths.
         """
         content = self.load_scene_content(split, episode.scene_id)
         if not content or not isinstance(content, dict):

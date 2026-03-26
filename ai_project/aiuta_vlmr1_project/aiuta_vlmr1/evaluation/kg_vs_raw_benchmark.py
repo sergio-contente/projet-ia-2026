@@ -1,5 +1,5 @@
 """
-KG vs raw comparison on IDKVQA — thin wrapper around the primary benchmark.
+KG vs raw comparison on IDKVQA -- thin wrapper around the primary benchmark.
 
 All logic lives in ``idkvqa_eval.run_idkvqa_benchmark`` and shared metrics in
 ``idkvqa_types``. This script runs multiple modes and writes one JSON for side-by-side tables.

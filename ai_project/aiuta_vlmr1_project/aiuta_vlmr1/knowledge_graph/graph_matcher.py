@@ -1,5 +1,5 @@
 """
-graph_matcher.py — Alignment scoring between detected objects and target facts.
+graph_matcher.py -- Alignment scoring between detected objects and target facts.
 Replaces AIUTA P_score LLM prompt with deterministic graph matching.
 """
 from __future__ import annotations
@@ -12,12 +12,12 @@ import numpy as np
 
 from .schema import ObjectNode, TargetFacts
 
-# Cache de embeddings por texto (válido durante o processo, resetado entre episódios se necessário)
+# Text embedding cache (valid during process, cleared between episodes if needed)
 _EMBEDDING_CACHE: dict[str, np.ndarray] = {}
 
 
 def clear_embedding_cache() -> None:
-    """Chamar no reset de episódio para liberar memória."""
+    """Clear cache on episode reset to free memory."""
     global _EMBEDDING_CACHE
     _EMBEDDING_CACHE.clear()
 
@@ -76,11 +76,11 @@ def _embedding_match(
     threshold_mismatch: float = 0.50,
 ) -> str:
     """
-    Compara obj_val e target_val via embeddings.
-    Retorna:
-      "match"    — similaridade >= threshold_match
-      "mismatch" — similaridade < threshold_mismatch
-      "uncertain" — zona cinzenta, precisa do VLM judge
+    Compare obj_val and target_val via embeddings.
+    Returns:
+      "match"    -- similarity >= threshold_match
+      "mismatch" -- similarity < threshold_mismatch
+      "uncertain" -- grey zone, needs VLM judge
     """
     emb_obj = _get_text_embedding(obj_val, loader)
     emb_tgt = _get_text_embedding(target_val, loader)
@@ -193,7 +193,7 @@ class GraphMatcher:
             capped = min(score, 0.5)
             print(
                 f"[GraphMatcher] alignment score={score:.2f} but positive_matched=0 "
-                f"(all matches from negatives) — capping to {capped:.2f}"
+                f"(all matches from negatives) -- capping to {capped:.2f}"
             )
             score = capped
 
@@ -218,14 +218,14 @@ class GraphMatcher:
             return score
         if vlm_judge_fn is None:
             return score
-        # Score -1.0 = informação insuficiente (KG vazio, sem overlap obj/target, ou nada resolvido).
-        # Não deixar o vlm_judge substituir a decisão nesses casos — forçar ASK.
+        # Score -1.0 = insufficient information (empty KG, no obj/target overlap, or nothing resolved).
+        # Do not let vlm_judge override the decision in these cases -- force ASK.
         if score < tau_stop:
             if score == -1.0:
-                print(f"[GraphMatcher] vlm_judge skipped — alignment inconclusive "
+                print(f"[GraphMatcher] vlm_judge skipped -- alignment inconclusive "
                     f"(score={score}, target_facts={target.num_facts})")
             else:
-                print(f"[GraphMatcher] vlm_judge skipped — KG score {score:.2f} "
+                print(f"[GraphMatcher] vlm_judge skipped -- KG score {score:.2f} "
                     f"< tau_stop {tau_stop:.2f}, alignment authoritative")
             return score
         obj_desc = obj.to_natural_language()

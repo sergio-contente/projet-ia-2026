@@ -46,7 +46,7 @@ def parse_question_attribute(question: str) -> tuple[str, str | None]:
 
 def coarse_question_taxonomy(question: str) -> str:
     """
-    Coarse type for paper breakdowns. **Heuristic only** — not from dataset metadata.
+    Coarse type for paper breakdowns. **Heuristic only** -- not from dataset metadata.
 
     Groups: existence, attribute, color, material, location, spatial, size, count, style, unknown_other.
     """

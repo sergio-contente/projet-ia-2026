@@ -1,11 +1,11 @@
-# Patch: trocar .venv por conda activate aiuta em todos os sbatch
+# Patch: replace .venv with conda activate aiuta in all sbatch files
 for f in slurm/*.sbatch; do
-  # Remove linhas com .venv/bin/activate
+  # Remove lines with .venv/bin/activate
   sed -i '/\.venv\/bin\/activate/d' "$f"
-  # Remove linhas com VENV_ACTIVATE
+  # Remove lines with VENV_ACTIVATE
   sed -i '/VENV_ACTIVATE/d' "$f"
-  # Adiciona conda activate depois do "set -x" (ou "set -euo pipefail")
-  # Se já não tiver conda activate
+  # Add conda activate after "set -x" (or "set -euo pipefail")
+  # Skip if already has conda activate
   if ! grep -q "conda activate" "$f"; then
     sed -i '/^set -x$/a source ~/miniconda3/etc/profile.d/conda.sh\nconda activate aiuta' "$f"
   fi

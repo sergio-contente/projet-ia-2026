@@ -212,7 +212,7 @@ def test_compare_mode_transitions():
     t = compare_mode_transitions(base, imp)
     assert t["num_aligned_samples"] == 3
     assert t["baseline_correct_to_improved_correct"] == 1
-    # ``b``: No→Yes; ``c``: overclaim Yes→IDK when GT is IDK.
+    # ``b``: No->Yes; ``c``: overclaim Yes->IDK when GT is IDK.
     assert t["baseline_wrong_to_improved_correct"] == 2
 
 
@@ -379,7 +379,7 @@ def test_fair_comparison_run(tmp_path):
     results_dir.mkdir()
     with open(results_dir / "raw_run.json", "w") as f:
         json.dump(result_data, f)
-    # Prior fair_comparison output is a JSON list — must not crash the loader.
+    # Prior fair_comparison output is a JSON list -- must not crash the loader.
     with open(results_dir / "fair_table.json", "w") as f:
         json.dump([{"mode": "raw", "accuracy_pct": 0}], f)
 

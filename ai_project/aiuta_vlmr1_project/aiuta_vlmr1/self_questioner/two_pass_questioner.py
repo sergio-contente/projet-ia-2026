@@ -1,5 +1,5 @@
 """
-two_pass_questioner.py — Two-pass self-questioner: detection triples + attribute forward pass.
+two_pass_questioner.py -- Two-pass self-questioner: detection triples + attribute forward pass.
 
 Pass 1: Extract presence/absence triples from the OVD <think> block (same as VLMr1SelfQuestioner).
 Pass 2: Run a second forward pass on the *same* model asking for structured attribute JSON
@@ -127,7 +127,7 @@ class TwoPassSelfQuestioner(AbstractSelfQuestioner):
         existing_attributes: dict[str, str] | None = None,
     ) -> list:
         """
-        Standalone attribute pass with an image — used by idkvqa_eval's two_pass_kg mode.
+        Standalone attribute pass with an image -- used by idkvqa_eval's two_pass_kg mode.
 
         Reuses the same ModelLoader singleton so no extra GPU memory is needed.
         """

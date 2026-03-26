@@ -1,5 +1,5 @@
 """
-compare_configs.py — Compare results across different experiment configurations.
+compare_configs.py -- Compare results across different experiment configurations.
 
 Loads result JSONs from multiple configs (A, B, C, D) and produces
 a comparison table and plots.

@@ -1,4 +1,4 @@
-"""attribute_parser.py — Parse structured JSON attributes from VLM <answer> tags."""
+"""attribute_parser.py -- Parse structured JSON attributes from VLM <answer> tags."""
 from __future__ import annotations
 
 import json
@@ -93,7 +93,7 @@ def parse_attribute_json(
     """
     answer_str = _extract_answer_json(text)
     if answer_str is None:
-        # No <answer> tags — try the whole text as JSON
+        # No <answer> tags -- try the whole text as JSON
         answer_str = text
 
     data = _try_parse_json(answer_str)

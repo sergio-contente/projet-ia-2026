@@ -1,5 +1,5 @@
 """
-aiuta_pipeline.py — Main AIUTA orchestration loop.
+aiuta_pipeline.py -- Main AIUTA orchestration loop.
 Strategy pattern selects components from config.
 
 Supports:
@@ -144,7 +144,7 @@ class AIUTAPipeline:
                 trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
             )[0]
             answer = raw.strip().rstrip(".")
-            print(f"[AIUTAPipeline] Detection VQA: Q={question!r} → A={answer!r}")
+            print(f"[AIUTAPipeline] Detection VQA: Q={question!r} -> A={answer!r}")
             low = answer.lower()
             if not answer or low in ("i don't know", "i dont know", "unknown"):
                 return None
@@ -264,7 +264,7 @@ class AIUTAPipeline:
         if self._num_questions_asked >= max_q and raw_n > 0:
             print(
                 f"[AIUTAPipeline] Question budget exhausted "
-                f"({self._num_questions_asked}/{max_q}) — forcing STOP"
+                f"({self._num_questions_asked}/{max_q}) -- forcing STOP"
             )
             final_signal = PolicySignal.STOP
             self._last_step_result = PipelineStepResult(
@@ -330,7 +330,7 @@ class AIUTAPipeline:
                         "unknown",
                         "not sure",
                     )
-                    # Always count — fair comparison with AIUTA (counts all Oracle queries)
+                    # Always count -- fair comparison with AIUTA (counts all Oracle queries)
                     self._num_questions_asked += 1
                     asked_here += 1
                     if is_idk:
@@ -374,13 +374,13 @@ class AIUTAPipeline:
                                         )
                                         self._kg.update_attributes(oid, [attr])
                                         print(
-                                            f"[AIUTAPipeline] Obj {oid!r} ← {yn_attr}={yn_val} "
+                                            f"[AIUTAPipeline] Obj {oid!r} <- {yn_attr}={yn_val} "
                                             f"(detection VQA confirmed)"
                                         )
                                     elif det_low.startswith("no"):
                                         print(
                                             f"[AIUTAPipeline] Obj {oid!r}: detection VQA denied "
-                                            f"{yn_attr}={yn_val} — not storing"
+                                            f"{yn_attr}={yn_val} -- not storing"
                                         )
                                     else:
                                         val = SceneKnowledgeGraph._normalize_open_answer_value(
@@ -396,7 +396,7 @@ class AIUTAPipeline:
                                             )
                                             self._kg.update_attributes(oid, [attr])
                                             print(
-                                                f"[AIUTAPipeline] Obj {oid!r} ← {yn_attr}={val} "
+                                                f"[AIUTAPipeline] Obj {oid!r} <- {yn_attr}={val} "
                                                 f"(detection VQA open answer)"
                                             )
                                 else:
@@ -413,19 +413,19 @@ class AIUTAPipeline:
                                         )
                                         self._kg.update_attributes(oid, [attr])
                                         print(
-                                            f"[AIUTAPipeline] Obj {oid!r} ← {attr_name}={val} "
+                                            f"[AIUTAPipeline] Obj {oid!r} <- {attr_name}={val} "
                                             f"(from detection VQA)"
                                         )
                                     elif val in ("yes", "no"):
                                         print(
                                             f"[AIUTAPipeline] Obj {oid!r}: detection VQA "
-                                            f"returned '{val}' for open question — skipping"
+                                            f"returned '{val}' for open question -- skipping"
                                         )
 
                         if oracle_no and det_answer and det_answer.strip().lower().startswith("yes"):
                             print(
                                 f"[AIUTAPipeline] Oracle='no' vs Detection='yes' "
-                                f"for: {action.question!r} — definitive mismatch"
+                                f"for: {action.question!r} -- definitive mismatch"
                             )
                             log_entry["target_facts_snapshot"] = {
                                 "known": dict(self._kg.target_facts.known_attributes),
@@ -434,7 +434,7 @@ class AIUTAPipeline:
                             self._episode_log.append(log_entry)
                             break
                     else:
-                        log_entry["detection_answer"] = "(think feature — obj already has attribute)"
+                        log_entry["detection_answer"] = "(think feature -- obj already has attribute)"
 
                     log_entry["target_facts_snapshot"] = {
                         "known": dict(self._kg.target_facts.known_attributes),

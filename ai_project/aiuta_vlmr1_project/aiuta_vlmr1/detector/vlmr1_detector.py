@@ -1,4 +1,4 @@
-"""vlmr1_detector.py — VLM-R1 detector adapter.
+"""vlmr1_detector.py -- VLM-R1 detector adapter.
 Refactored from benchmark_ovd.py::run_single_inference()."""
 from __future__ import annotations
 
@@ -81,14 +81,14 @@ class VLMr1Detector(AbstractDetector):
 
         # Qwen2.5-VL may output coords in a 1000x1000 normalized grid
         if max(x1, x2) <= 1000 and max(y1, y2) <= 1000 and (x2 > w or y2 > h):
-            print(f"[CROP_DEBUG] Detected 1000-grid coords — rescaling to {w}x{h}")
+            print(f"[CROP_DEBUG] Detected 1000-grid coords -- rescaling to {w}x{h}")
             x1, y1 = x1 * w / 1000, y1 * h / 1000
             x2, y2 = x2 * w / 1000, y2 * h / 1000
 
         if x2 > w * 1.5 or y2 > h * 1.5:
             print(
                 f"[CROP_DEBUG] bbox coords ({x2:.0f},{y2:.0f}) >> "
-                f"obs dims ({w},{h}) — likely WRONG SPACE"
+                f"obs dims ({w},{h}) -- likely WRONG SPACE"
             )
 
         xi1 = max(0, min(w - 1, int(round(x1))))
@@ -99,7 +99,7 @@ class VLMr1Detector(AbstractDetector):
         print(f"[CROP_DEBUG] clipped=[{xi1},{yi1},{xi2},{yi2}], crop_size={crop_w}x{crop_h}")
 
         if xi2 <= xi1 or yi2 <= yi1:
-            print("[CROP_DEBUG] EMPTY CROP → returning None")
+            print("[CROP_DEBUG] EMPTY CROP -> returning None")
             return None
 
         area_ratio = (crop_w * crop_h) / (w * h)

@@ -1,4 +1,4 @@
-"""logging_config.py — Structured logging setup."""
+"""logging_config.py -- Structured logging setup."""
 import logging
 import sys
 

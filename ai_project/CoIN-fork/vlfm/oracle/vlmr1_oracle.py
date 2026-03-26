@@ -23,7 +23,7 @@ class VLMr1Oracle:
     def __init__(self) -> None:
         self._instance_image: np.ndarray | None = None
         self._target_object: str = ""
-        self._loader = None  # lazy — loaded when needed
+        self._loader = None  # lazy -- loaded when needed
 
     def set_instance_image(self, instance_image: np.ndarray, target_object: str) -> None:
         self._instance_image = instance_image.astype(np.uint8)
@@ -33,7 +33,7 @@ class VLMr1Oracle:
     @staticmethod
     def _is_yesno_question(question: str) -> bool:
         q = question.strip().lower()
-        # Escolha "A or B" precisa de resposta aberta, não yes/no
+        # "A or B" choice needs an open answer, not yes/no
         if q.startswith(("is ", "are ")) and " or " in q and "yes or no" not in q:
             return False
         yesno_prefixes = ("is ", "does ", "can ", "are ", "has ", "do ", "was ", "were ", "could ")
@@ -116,7 +116,7 @@ class VLMr1Oracle:
                 raw = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
                 raw_l = raw.strip().lower()
 
-                print(f"[VLMr1Oracle] Q: {question!r} → A: {raw_l!r} (yesno={is_yesno})")
+                print(f"[VLMr1Oracle] Q: {question!r} -> A: {raw_l!r} (yesno={is_yesno})")
 
                 if is_yesno:
                     if raw_l.startswith("yes"):
@@ -144,9 +144,9 @@ class VLMr1Oracle:
         detected_crop: np.ndarray,
     ) -> tuple[bool, float]:
         """
-        Compara visualmente a instance_imagegoal com o crop detectado.
-        Retorna (is_match, entropy) onde entropy é a incerteza do modelo [0,1].
-        Alta entropia = modelo incerto = possivelmente o objeto correto.
+        Visually compares the instance_imagegoal with the detected crop.
+        Returns (is_match, entropy) where entropy is the model uncertainty [0,1].
+        High entropy = uncertain model = possibly the correct object.
         """
         if self._instance_image is None or detected_crop is None:
             return False, 1.0
@@ -239,7 +239,7 @@ class VLMr1Oracle:
                 trimmed = [o[len(i) :] for i, o in zip(inputs.input_ids, gen.sequences)]
                 raw = proc.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
                 raw_l = raw.strip().lower()
-                print(f"[VLMr1Oracle] Visual comparison → A: {raw_l!r}")
+                print(f"[VLMr1Oracle] Visual comparison -> A: {raw_l!r}")
 
                 entropy = 1.0
                 if getattr(gen, "scores", None) and len(gen.scores) > 0:

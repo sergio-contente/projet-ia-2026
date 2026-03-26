@@ -1,5 +1,5 @@
 """
-model_loader.py — Config-keyed model loader for VLM-R1.
+model_loader.py -- Config-keyed model loader for VLM-R1.
 
 Refactored from: benchmark_ovd.py::load_model_and_processor()
 

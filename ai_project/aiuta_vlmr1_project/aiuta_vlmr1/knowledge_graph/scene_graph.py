@@ -1,4 +1,4 @@
-"""scene_graph.py — Per-episode scene knowledge graph. Repository pattern."""
+"""scene_graph.py -- Per-episode scene knowledge graph. Repository pattern."""
 from __future__ import annotations
 
 import json
@@ -271,7 +271,7 @@ class SceneKnowledgeGraph:
 
         src = f"user_t{timestep}"
 
-        # ── YES/NO PATH: value from QUESTION, polarity from RESPONSE ──
+        # -- YES/NO PATH: value from QUESTION, polarity from RESPONSE --
         if question is not None:
             parsed_yesno = self._parse_yesno_question(question)
             if parsed_yesno is not None:
@@ -292,7 +292,7 @@ class SceneKnowledgeGraph:
                 self.target_facts.record_question(question)
                 return
 
-        # ── OPEN-ENDED PATH: value from RESPONSE ──
+        # -- OPEN-ENDED PATH: value from RESPONSE --
         from .target_fact_parser import parse_user_response_to_facts
 
         facts = parse_user_response_to_facts(user_response)
@@ -316,7 +316,7 @@ class SceneKnowledgeGraph:
                     self.target_facts.record_question(question)
                     return
 
-        # ── FINAL FALLBACK ──
+        # -- FINAL FALLBACK --
         r = user_response.strip().lower()
         is_neg = any(r.startswith(p) for p in ("no", "not", "it is not", "it's not"))
         if is_neg:

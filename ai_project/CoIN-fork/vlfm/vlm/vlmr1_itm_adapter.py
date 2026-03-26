@@ -15,13 +15,13 @@ from aiuta_vlmr1.utils.model_loader import ModelLoader
 
 class VLMr1ITMAdapter:
     """
-    Adapter em formato semelhante ao `BLIP2ITMClient`.
+    Adapter with a similar interface to `BLIP2ITMClient`.
 
     Interface:
       - `.cosine(image: np.ndarray, txt: str) -> float`
 
-    Implementa um VLM-R1 forward pass com `max_new_tokens=1` e devolve
-    `P(token="yes")` como score ITM.
+    Implements a VLM-R1 forward pass with `max_new_tokens=1` and returns
+    `P(token="yes")` as the ITM score.
     """
 
     def __init__(self, *, model_config: Any) -> None:
@@ -31,7 +31,7 @@ class VLMr1ITMAdapter:
         self._processor = loader.processor
         self._device = loader.device
 
-        # Cache dos ids de tokens para "yes/no" (com variações de tokenização).
+        # Cache token ids for "yes/no" (with tokenization variants).
         tokenizer = getattr(self._processor, "tokenizer", None)
         self._token_id_yes = None
         if tokenizer is not None:
@@ -54,12 +54,12 @@ class VLMr1ITMAdapter:
 
     def cosine(self, image: np.ndarray, txt: str) -> float:
         """
-        Score ITM em [0,1], com fallback robusto:
-        - se falhar no forward pass => retorna 0.5
+        ITM score in [0,1], with robust fallback:
+        - if the forward pass fails => returns 0.5
         """
         try:
             if self._token_id_yes is None:
-                # Não conseguimos calcular probabilidade com precisão.
+                # Cannot compute probability accurately.
                 return 0.5
 
             rgb = self._to_uint8_rgb(image)
@@ -117,11 +117,11 @@ class VLMr1ITMAdapter:
                 if not getattr(out, "scores", None):
                     return 0.5
 
-                # `scores[0]` corresponde ao passo de geração 1.
+                # `scores[0]` corresponds to generation step 1.
                 logits = out.scores[0][0]  # (vocab,)
                 probs = F.softmax(logits, dim=-1)
                 prob_yes = float(probs[self._token_id_yes].detach().cpu().item())
-                # Normalização defensiva.
+                # Defensive normalization.
                 if not np.isfinite(prob_yes):
                     return 0.5
                 return float(max(0.0, min(1.0, prob_yes)))

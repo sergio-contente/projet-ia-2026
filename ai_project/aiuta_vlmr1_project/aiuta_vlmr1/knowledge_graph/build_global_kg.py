@@ -1,5 +1,5 @@
 """
-build_global_kg — Offline **global** knowledge graph for IDKVQA.
+build_global_kg -- Offline **global** knowledge graph for IDKVQA.
 
 Runs the same detection prompt as ``mode=kg`` once per **unique image** (fingerprint:
 func:`aiuta_vlmr1.evaluation.idkvqa_eval.stable_idkvqa_image_id`), extracts triples with

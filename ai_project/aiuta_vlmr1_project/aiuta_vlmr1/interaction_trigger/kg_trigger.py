@@ -1,4 +1,4 @@
-"""kg_trigger.py — KG-based Interaction Trigger. 0 LLM calls."""
+"""kg_trigger.py -- KG-based Interaction Trigger. 0 LLM calls."""
 from __future__ import annotations
 
 from collections.abc import Callable

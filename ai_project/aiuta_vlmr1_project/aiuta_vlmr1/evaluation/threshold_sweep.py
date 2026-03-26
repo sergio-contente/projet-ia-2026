@@ -93,13 +93,13 @@ if __name__ == "__main__":
     parser.add_argument("--step", type=float, default=0.02)
     args = parser.parse_args()
 
-    # 🔹 Load JSON
+    # [*] Load JSON
     with open(args.input) as f:
         data = json.load(f)
 
     import inspect
 
-    # 🔹 Detect correct key
+    # [*] Detect correct key
     examples = (
         data.get("examples")
         or data.get("results")
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     if examples is None:
         raise ValueError("No per-sample data found in input JSON")
 
-    # 🔹 Filter fields dynamically
+    # [*] Filter fields dynamically
     valid_keys = set(inspect.signature(QAExampleResult).parameters.keys())
 
     def filter_dict(d):
@@ -117,12 +117,12 @@ if __name__ == "__main__":
 
     results = [QAExampleResult(**filter_dict(r)) for r in examples]
 
-    # 🔹 Sweep
+    # [*] Sweep
     taus = default_tau_grid(step=args.step)
     rows = sweep_entropy_threshold(results, taus)
 
-    # 🔹 Save
+    # [*] Save
     with open(args.output, "w") as f:
         json.dump(rows, f, indent=2)
 
-    print(f"✅ Sweep saved to {args.output}")
+    print(f"[OK] Sweep saved to {args.output}")

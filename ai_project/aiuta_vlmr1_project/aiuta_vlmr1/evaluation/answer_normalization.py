@@ -73,9 +73,9 @@ def normalize_yes_no_idk(text: str | None) -> str:
             return LABEL_NO
 
     # Short answers
-    if lower in ("y", "✓", "true"):
+    if lower in ("y", "true"):
         return LABEL_YES
-    if lower in ("n", "✗", "false"):
+    if lower in ("n", "false"):
         return LABEL_NO
 
     return s

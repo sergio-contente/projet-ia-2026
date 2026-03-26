@@ -1,4 +1,4 @@
-"""vlmr1_questioner.py — Self-Questioner using VLM-R1 reasoning + description pass."""
+"""vlmr1_questioner.py -- Self-Questioner using VLM-R1 reasoning + description pass."""
 from __future__ import annotations
 
 import numpy as np
@@ -155,7 +155,7 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
             obs_source = "FULL_FRAME_FALLBACK"
             print(
                 f"[QUESTIONER_DEBUG] No crop for {detection.label!r} "
-                f"bbox={detection.bbox} — skipping description pass"
+                f"bbox={detection.bbox} -- skipping description pass"
             )
         else:
             if isinstance(obs, np.ndarray):
@@ -217,7 +217,7 @@ class VLMr1SelfQuestioner(AbstractSelfQuestioner):
                         kg.update_attributes(node.obj_id, [canon_attr])
                         print(
                             f"[VLMr1SelfQuestioner] Canonical: "
-                            f"{attr_name}={qualifier} → {canonical}={qualifier}"
+                            f"{attr_name}={qualifier} -> {canonical}={qualifier}"
                         )
 
                 node._think_features = features  # type: ignore[attr-defined]

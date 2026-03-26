@@ -70,8 +70,8 @@ class ObjectPointCloudMap:
 
     def is_detection_evaluated(self, new_detection: np.ndarray, target_class: str) -> bool:
         """
-        VLM-R1 only: retorna True se esta posição já foi avaliada pelo visual judge
-        (confirmada OU rejeitada), para evitar re-avaliações desnecessárias.
+        VLM-R1 only: returns True if this position has already been evaluated by the visual judge
+        (confirmed OR rejected), to avoid unnecessary re-evaluations.
         """
         if target_class in self._rejected_cloud:
             for cloud, _ in self._rejected_cloud[target_class]:
@@ -149,7 +149,7 @@ class ObjectPointCloudMap:
             global_cloud = transform_points(tf_camera_to_episodic, local_cloud)
             global_cloud = np.concatenate((global_cloud, within_range[:, None]), axis=1)
 
-            # Sempre acumular no detection_cloud para value map injection
+            # Always accumulate in detection_cloud for value map injection
             if object_name in self.detection_cloud:
                 self.detection_cloud[object_name] = np.concatenate(
                     (self.detection_cloud[object_name], global_cloud), axis=0
@@ -157,8 +157,8 @@ class ObjectPointCloudMap:
             else:
                 self.detection_cloud[object_name] = global_cloud
 
-            # Verificar se esta posição já foi avaliada pelo visual judge
-            # (usa rejected_cloud + clouds, não detection_cloud)
+            # Check if this position has already been evaluated by the visual judge
+            # (uses rejected_cloud + clouds, not detection_cloud)
             if self.is_detection_evaluated(global_cloud, object_name):
                 if object_name in self.clouds:
                     self.clouds[object_name] = global_cloud
@@ -179,33 +179,33 @@ class ObjectPointCloudMap:
             print(f"[VLMr1Bridge] pipeline_step signal={signal_value!r} for {object_name}")
 
             if str(signal_value).lower() == "stop":
-                # Confirmado: adicionar ao clouds para navegação
+                # Confirmed: add to clouds for navigation
                 if object_name in self.clouds:
                     self.clouds[object_name] = np.concatenate((self.clouds[object_name], global_cloud), axis=0)
                 else:
                     self.clouds[object_name] = global_cloud
-                # Limpar rejected_cloud desta posição se confirmada
+                # Clear rejected_cloud for this position if confirmed
                 self._rejected_cloud.pop(object_name, None)
                 self._rejection_count[object_name] = 0
                 return True
 
-            # Capturar entropia da última comparação visual
+            # Capture entropy from the last visual comparison
             entropy = getattr(getattr(self, "_vlmr1_bridge", None), "_last_visual_entropy", 1.0)
 
-            # Guardar (cloud, entropy) no rejected_cloud
+            # Store (cloud, entropy) in rejected_cloud
             if not hasattr(self, "_rejected_cloud"):
                 self._rejected_cloud = {}
             if object_name not in self._rejected_cloud:
                 self._rejected_cloud[object_name] = []
             self._rejected_cloud[object_name].append((global_cloud, float(entropy)))
 
-            # Contabilizar rejeição
+            # Count rejection
             if not hasattr(self, "_rejection_count"):
                 self._rejection_count = {}
             self._rejection_count[object_name] = self._rejection_count.get(object_name, 0) + 1
 
             if self._rejection_count[object_name] >= 3:
-                # Navegar para a posição com maior entropia (modelo mais incerto = mais provável de ser o alvo)
+                # Navigate to the position with highest entropy (most uncertain model = most likely the target)
                 best_cloud, best_entropy = max(
                     self._rejected_cloud[object_name],
                     key=lambda x: x[1],
@@ -217,19 +217,19 @@ class ObjectPointCloudMap:
 
                 if self._total_rejection_count[object_name] >= 2:
                     print(
-                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
+                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejected "
                         f"{self._rejection_count[object_name]}x total "
                         f"({self._total_rejection_count[object_name]} cycles) "
-                        f"— forçando aceitação como melhor candidato (entropy={best_entropy:.3f})"
+                        f"-- forcing acceptance as best candidate (entropy={best_entropy:.3f})"
                     )
                     self.clouds[object_name] = best_cloud
                     self._rejection_count[object_name] = 0
                     self._rejected_cloud.pop(object_name, None)
-                    return True  # sinalizar ao caller que é para navegar + stop
+                    return True  # signal to the caller to navigate + stop
                 else:
                     print(
-                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejeitado "
-                        f"{self._rejection_count[object_name]}x — navegando para posição mais incerta "
+                        Fore.YELLOW + f"[VLMr1] '{object_name}' rejected "
+                        f"{self._rejection_count[object_name]}x -- navigating to most uncertain position "
                         f"(entropy={best_entropy:.3f})"
                     )
                     self.clouds[object_name] = best_cloud
